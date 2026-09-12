@@ -1,0 +1,22 @@
+[project]
+name = "gfci-gui"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "markdown>=3.5",
+    "matplotlib>=3.9.4",
+    "numpy>=2.0.2",
+    "pandas>=2.3.3",
+    "pyqt6>=6.4.0",
+    "qt6-applications>=6.5.0.2.3",
+    "scipy>=1.13.1",
+]
+
+[project.scripts]
+gfci-gui = "gfci_gui:main"
+
+[build-system]
+requires = ["uv_build>=0.12.5,<0.13.0"]
+build-backend = "uv_build"
