@@ -2,18 +2,19 @@
 
 A non-programmer-friendly desktop GUI for `gfci_analysis` (UL101 Sec.6 GFCI interoperability test analysis).
 
-The analysis engine ships inside this project as the `gfci_analysis/` package, so the
-GUI runs on its own. A sibling `../gfci_analysis_refactored` directory is also
-accepted: when present it is used as a fallback, otherwise the bundled engine is used.
+The analysis engine lives in the sibling repository `../gfci_analysis_refactored`
+(package `gfci_analysis`). The GUI imports it from there; if a `gfci_analysis/`
+package is placed inside this folder it takes precedence, which makes it easy to
+try out engine edits locally before syncing them back.
 
 ## Directory Structure
 
 ```
 gfci_gui/
-|-- gfci_analysis/   # analysis engine bundled with the GUI
 |-- window.ui        # Qt Designer project file (edit repeatedly)
 |-- window_ui.py     # Python UI code generated from window.ui (do not edit by hand)
 |-- main.py          # Main program: signals, file selection, background analysis thread
+|-- image_view.py    # Zoomable / pannable image view used by the plot tabs
 |-- requirements.txt # Dependency list
 `-- README.md
 ```
@@ -30,10 +31,11 @@ pip install -r requirements.txt
 python main.py
 ```
 
-> The program calls `gfci_analysis.pipeline.run_pipeline` from the bundled engine
-> (or from `../gfci_analysis_refactored` when that directory exists). Make sure
-> numpy / pandas / scipy / matplotlib are installed. `markdown` is used by the GUI
-> to render the report tab as a Markdown preview.
+> The program calls `gfci_analysis.pipeline.run_pipeline` from
+> `../gfci_analysis_refactored` (or from a `gfci_analysis/` package inside this
+> folder when one is present). Make sure numpy / pandas / scipy / matplotlib are
+> installed. `markdown` is used by the GUI to render the report tab as a Markdown
+> preview.
 
 ## Usage
 
@@ -41,6 +43,21 @@ python main.py
 2. **Set parameters**: analysis channel (CH1/CH2/CH3, filled from the CSV headers), time range, FFT frequency range, over-limit threshold (mV), image format, output directory.
 3. **Run analysis**: Click "Run Analysis". The right-hand tabs show the time-domain plot, FFT plot, a rendered Markdown report, and the log.
 4. Output files (PNG/SVG, CSV, Markdown report) are saved to the "Output Directory".
+
+### Plot tabs
+
+Each plot tab has a small toolbar above the picture:
+
+| Control | Action |
+| --- | --- |
+| `-` | Zoom out (one step, 1.25x) |
+| `+` | Zoom in (one step, 1.25x) |
+| `Fit` | Scale the picture so its width matches the window, leaving a small margin |
+
+A freshly generated plot is fitted to the window width automatically, and stays
+fitted when the window is resized. After you zoom in the picture keeps its manual
+scale, and you can drag it with the left mouse button to move around; press `Fit`
+to snap back to the window width.
 
 ## Editing the UI with Qt Designer
 

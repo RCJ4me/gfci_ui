@@ -20,7 +20,6 @@ import traceback
 
 import markdown
 from PyQt6.QtCore import QThread, pyqtSignal, Qt
-from PyQt6.QtGui import QPixmap
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox,
 )
@@ -150,6 +149,7 @@ class MainWindow(QMainWindow):
         self.worker = None
         self._channel_user_selected = False
         self._connect_signals()
+        self._setup_plot_views()
 
     def _connect_signals(self):
         self.ui.btn_add_files.clicked.connect(self.add_files)
@@ -160,6 +160,17 @@ class MainWindow(QMainWindow):
         self.ui.combo_channel.currentTextChanged.connect(
             self._on_channel_changed
         )
+
+    def _setup_plot_views(self):
+        """Wire the zoom controls and empty-state text of both plot tabs."""
+        self.ui.view_time.set_placeholder("No time-domain plot generated yet.")
+        self.ui.view_fft.set_placeholder("No FFT plot generated yet.")
+        self.ui.btn_zoom_in_time.clicked.connect(self.ui.view_time.zoom_in)
+        self.ui.btn_zoom_out_time.clicked.connect(self.ui.view_time.zoom_out)
+        self.ui.btn_fit_time.clicked.connect(self.ui.view_time.fit_to_width)
+        self.ui.btn_zoom_in_fft.clicked.connect(self.ui.view_fft.zoom_in)
+        self.ui.btn_zoom_out_fft.clicked.connect(self.ui.view_fft.zoom_out)
+        self.ui.btn_fit_fft.clicked.connect(self.ui.view_fft.fit_to_width)
 
     def _on_channel_changed(self, _text):
         self._channel_user_selected = True
@@ -249,9 +260,9 @@ class MainWindow(QMainWindow):
     def on_file_done(self, base, time_png, fft_png, report_text):
         self.log(f"Finished: {base}")
         if time_png and os.path.exists(time_png):
-            self.show_image(self.ui.lbl_time_plot, time_png)
+            self.show_image(self.ui.view_time, time_png)
         if fft_png and os.path.exists(fft_png):
-            self.show_image(self.ui.lbl_fft_plot, fft_png)
+            self.show_image(self.ui.view_fft, fft_png)
         if report_text:
             self.show_report(report_text)
 
@@ -283,18 +294,9 @@ class MainWindow(QMainWindow):
         )
         self.ui.txt_report.setHtml(styled_html)
 
-    def show_image(self, label, path):
-        pixmap = QPixmap(path)
-        if pixmap.isNull():
+    def show_image(self, view, path):
+        if not view.set_image(path):
             self.log(f"Could not load image: {path}")
-            return
-        label.setPixmap(
-            pixmap.scaled(
-                label.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
 
     def log(self, message):
         self.ui.txt_log.appendPlainText(message)
