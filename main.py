@@ -13,16 +13,22 @@ After layout changes, regenerate window_ui.py:
     pyuic6 -o window_ui.py window.ui
 """
 
+import inspect
 import os
 import re
 import sys
 import traceback
+from pathlib import Path
 
 import markdown
-from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from PyQt6.QtCore import QStandardPaths, QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox,
 )
+
+# Shown in the bottom-left corner of the window (see window.ui / lbl_version).
+__version__ = "0.0.1.1"
+APP_NAME = "GFCI Analyzer"
 
 # Analysis engine: prefer the copy bundled with this GUI, then the sibling repo.
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +52,30 @@ for _path in reversed(_IMPORT_PATHS):
 from window_ui import Ui_MainWindow  # noqa: E402
 
 
+def default_output_directory():
+    """Return a writable output directory suitable for a packaged GUI app."""
+    documents = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.DocumentsLocation
+    )
+    root = Path(documents) if documents else Path.home()
+    return str((root / "GFCI Export").resolve())
+
+
+def configure_matplotlib_cache():
+    """Keep Matplotlib's cache inside a writable per-user cache directory."""
+    cache_root = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.CacheLocation
+    )
+    if not cache_root:
+        return
+    cache_dir = Path(cache_root) / "matplotlib"
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    os.environ.setdefault("MPLCONFIGDIR", str(cache_dir))
+
+
 def find_csv_channels(file_path):
     """Return the channel names (e.g. ['CH1', 'CH2', 'CH3']) declared in a CSV."""
     try:
@@ -62,7 +92,8 @@ def find_csv_channels(file_path):
 class AnalysisWorker(QThread):
     """Background analysis thread to keep the GUI responsive."""
 
-    progress = pyqtSignal(int)          # 0-100
+    progress = pyqtSignal(int)          # 0-100, overall across all files
+    stage = pyqtSignal(str)             # current pipeline stage, for the status bar
     log = pyqtSignal(str)               # log line
     file_done = pyqtSignal(str, str, str, str)  # filename, time plot, FFT plot, report
     finished_ok = pyqtSignal(int, int)  # success count, failure count
@@ -108,6 +139,16 @@ class AnalysisWorker(QThread):
         output_cfg = OutputConfig(output_dir=Path(self.params["output_dir"]))
         output_cfg.ensure()
 
+        # Older engine revisions have no stage hook; fall back to per-file progress.
+        reports_stages = (
+            "progress_callback" in inspect.signature(run_pipeline).parameters
+        )
+        if not reports_stages:
+            self.log.emit(
+                "This gfci_analysis engine does not report pipeline stages; "
+                "the progress bar advances once per file."
+            )
+
         success_count = 0
         fail_count = 0
         total = len(self.file_paths)
@@ -115,13 +156,22 @@ class AnalysisWorker(QThread):
         for idx, file_path in enumerate(self.file_paths):
             base = os.path.basename(file_path)
             self.log.emit(f"[{idx + 1}/{total}] Analyzing: {base}")
+
+            def report_stage(fraction, label, idx=idx, base=base):
+                """Scale one file's 0-1 progress into the overall percentage."""
+                self.progress.emit(int(round((idx + fraction) / total * 100.0)))
+                self.stage.emit(f"{base} - {label}")
+
             try:
+                run_kwargs = {"channel": self.params["channel"]}
+                if reports_stages:
+                    run_kwargs["progress_callback"] = report_stage
                 result = run_pipeline(
                     file_path,
                     analysis_cfg=analysis_cfg,
                     plot_cfg=plot_cfg,
                     output_cfg=output_cfg,
-                    channel=self.params["channel"],
+                    **run_kwargs,
                 )
                 self.progress.emit(int((idx + 1) / total * 100))
                 self.file_done.emit(
@@ -148,6 +198,18 @@ class MainWindow(QMainWindow):
 
         self.worker = None
         self._channel_user_selected = False
+        self._progress_target = 0
+        self._progress_ceiling = 0
+        self._progress_ticks = 0
+
+        # Eases the progress bar toward the latest stage value so the jumps
+        # between pipeline stages do not look abrupt.
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(20)
+        self._progress_timer.timeout.connect(self._advance_progress)
+
+        self.ui.lbl_version.setText(f"Version {__version__}")
+        self.ui.edit_output_dir.setText(default_output_directory())
         self._connect_signals()
         self._setup_plot_views()
 
@@ -174,6 +236,43 @@ class MainWindow(QMainWindow):
 
     def _on_channel_changed(self, _text):
         self._channel_user_selected = True
+
+    # ---------- Progress ----------
+    # While a stage runs the bar is allowed to creep this far past the value
+    # reported for that stage, so long steps (reading a large CSV) still move.
+    CREEP_POINTS = 4
+    CREEP_TICKS = 20          # timer ticks per crept point (20 ms each)
+
+    def set_progress(self, value: int):
+        """Point the progress bar at *value*; the bar then eases toward it."""
+        self._progress_target = max(0, min(100, int(value)))
+        self._progress_ceiling = min(100, self._progress_target + self.CREEP_POINTS)
+        self._progress_ticks = 0
+        if self._progress_target == 0:
+            self._progress_timer.stop()
+            self.ui.progress_bar.setValue(0)
+        elif not self._progress_timer.isActive():
+            self._progress_timer.start()
+
+    def _advance_progress(self):
+        bar = self.ui.progress_bar
+        current = bar.value()
+        if current >= self._progress_ceiling:
+            self._progress_timer.stop()
+            return
+        if current < self._progress_target:
+            step = max(1, (self._progress_target - current) // 4)
+        else:
+            # Stage finished reporting but is still working: creep slowly.
+            self._progress_ticks += 1
+            if self._progress_ticks < self.CREEP_TICKS:
+                return
+            self._progress_ticks = 0
+            step = 1
+        bar.setValue(min(self._progress_ceiling, current + step))
+
+    def on_stage(self, text):
+        self.statusBar().showMessage(text)
 
     # ---------- File operations ----------
     def add_files(self):
@@ -245,13 +344,14 @@ class MainWindow(QMainWindow):
 
         self.ui.txt_log.clear()
         self.ui.txt_report.clear()
-        self.ui.progress_bar.setValue(0)
+        self.set_progress(0)
         self.log(f"Starting analysis of {len(files)} file(s) ...")
         self.log(f"FFT analysis channel: {self.ui.combo_channel.currentText()}")
         self.ui.btn_run.setEnabled(False)
 
         self.worker = AnalysisWorker(files, params, self)
-        self.worker.progress.connect(self.ui.progress_bar.setValue)
+        self.worker.progress.connect(self.set_progress)
+        self.worker.stage.connect(self.on_stage)
         self.worker.log.connect(self.log)
         self.worker.file_done.connect(self.on_file_done)
         self.worker.finished_ok.connect(self.on_finished)
@@ -268,7 +368,7 @@ class MainWindow(QMainWindow):
 
     def on_finished(self, success, fail):
         self.ui.btn_run.setEnabled(True)
-        self.ui.progress_bar.setValue(100)
+        self.set_progress(100)
         self.statusBar().showMessage(
             f"Analysis finished: {success} succeeded, {fail} failed", 8000
         )
@@ -304,6 +404,11 @@ class MainWindow(QMainWindow):
 
 def main():
     app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setApplicationVersion(__version__)
+    app.setOrganizationName("GFCI")
+    configure_matplotlib_cache()
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

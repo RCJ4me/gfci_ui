@@ -21,15 +21,37 @@ gfci_gui/
 
 ## Run
 
+> **Python version:** use a standalone CPython 3.10-3.12 (the repo pins 3.11 via
+> `.python-version`). Do **not** build the environment on top of an Anaconda
+> interpreter: Anaconda ships its own Qt6 DLLs, and PyQt6 then fails to load
+> with `ImportError: DLL load failed while importing QtWidgets`. Python 3.14 is
+> also unsupported because the numpy/scipy wheels for it are not yet reliable.
+
 ```bash
-# 1. Install dependencies (recommended: uv or venv)
+# 1. Install dependencies (recommended: uv)
+uv sync
+
+# 2. Launch the GUI
+uv run python main.py
+```
+
+Alternatively, with a plain virtual environment:
+
+```bash
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-# 2. Launch the GUI
 python main.py
 ```
+
+## Build standalone applications
+
+The project includes cross-platform PyInstaller configuration for building a
+macOS `.app` on macOS and a single-file Windows `.exe` on Windows. Python does
+not need to be installed on the target computer.
+
+See [PACKAGING.md](PACKAGING.md) for prerequisites, build commands, signing
+notes, and troubleshooting.
 
 > The program calls `gfci_analysis.pipeline.run_pipeline` from
 > `../gfci_analysis_refactored` (or from a `gfci_analysis/` package inside this
@@ -43,6 +65,12 @@ python main.py
 2. **Set parameters**: analysis channel (CH1/CH2/CH3, filled from the CSV headers), time range, FFT frequency range, over-limit threshold (mV), image format, output directory.
 3. **Run analysis**: Click "Run Analysis". The right-hand tabs show the time-domain plot, FFT plot, a rendered Markdown report, and the log.
 4. Output files (PNG/SVG, CSV, Markdown report) are saved to the "Output Directory".
+
+While a run is in progress the progress bar advances through the individual pipeline
+stages (reading the CSV, Let-go filtering, each plot, each CSV export, the FFT
+analysis, the report) rather than jumping once per file, and the status bar names
+the step that is currently running. The version number and the author are shown in
+the bottom-left corner of the window.
 
 ### Plot tabs
 
