@@ -3,7 +3,7 @@ name = "gfci-gui"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.14"
+requires-python = ">=3.10"
 dependencies = [
     "markdown>=3.5",
     "matplotlib>=3.9.4",
@@ -14,9 +14,14 @@ dependencies = [
     "scipy>=1.13.1",
 ]
 
-[project.scripts]
-gfci-gui = "gfci_gui:main"
+[project.optional-dependencies]
+build = [
+    "pyinstaller>=6.16",
+]
 
-[build-system]
-requires = ["uv_build>=0.12.5,<0.13.0"]
-build-backend = "uv_build"
+# This is an application, not a distributable library: it is launched with
+# `python main.py` and packaged with PyInstaller (see gfci_gui.spec). There is
+# therefore no build backend and no console-script entry point. uv only manages
+# the virtual environment and dependencies.
+[tool.uv]
+package = false

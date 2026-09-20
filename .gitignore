@@ -4,8 +4,21 @@ __pycache__/
 build/
 dist/
 wheels/
-export
 *.egg-info
+scripts
 
 # Virtual environments
 .venv
+
+# Project data
+.gitignore
+.python-version
+raw_data
+/export/
+/.codex/
+gfci_gui.spec
+build_windows.bat
+build_macos.command
+PACKAGING.md
+/pic/
+

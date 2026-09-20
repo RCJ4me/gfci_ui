@@ -62,7 +62,7 @@ notes, and troubleshooting.
 ## Usage
 
 1. **Add CSV**: Click "Add CSV" to select one or more MSO54 oscilloscope export files.
-2. **Set parameters**: analysis channel (CH1/CH2/CH3, filled from the CSV headers), time range, FFT frequency range, over-limit threshold (mV), image format, output directory.
+2. **Set parameters**: analysis channel (CH1/CH2/CH3, filled from the CSV headers), time range, FFT frequency range, base over-limit threshold (mV), image format, output directory. The analysis engine scales this base threshold by frequency before comparing FFT peaks.
 3. **Run analysis**: Click "Run Analysis". The right-hand tabs show the time-domain plot, FFT plot, a rendered Markdown report, and the log.
 4. Output files (PNG/SVG, CSV, Markdown report) are saved to the "Output Directory".
 
