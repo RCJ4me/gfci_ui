@@ -247,7 +247,7 @@ class Ui_MainWindow(object):
 
     def retranslateUi(self, MainWindow):
         _translate = QtCore.QCoreApplication.translate
-        MainWindow.setWindowTitle(_translate("MainWindow", "GFCI Oscilloscope Data Analysis Tool (UL101 Sec.6)"))
+        MainWindow.setWindowTitle(_translate("MainWindow", "Torch Dragon"))
         self.groupBox_input.setTitle(_translate("MainWindow", "1. Input Data"))
         self.btn_add_files.setText(_translate("MainWindow", "Add CSV"))
         self.btn_remove_file.setText(_translate("MainWindow", "Remove Selected"))
