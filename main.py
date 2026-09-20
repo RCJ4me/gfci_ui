@@ -22,13 +22,16 @@ from pathlib import Path
 
 import markdown
 from PyQt6.QtCore import QStandardPaths, QThread, QTimer, Qt, pyqtSignal
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox,
 )
 
 # Shown in the bottom-left corner of the window (see window.ui / lbl_version).
-__version__ = "0.0.1.1"
+__version__ = "0.0.2.1"
 APP_NAME = "GFCI Analyzer"
+APP_USER_MODEL_ID = "GFCI.Analyzer"
+APP_ICON_RELATIVE_PATH = Path("assets") / "torchdragon.ico"
 
 # Analysis engine: prefer the copy bundled with this GUI, then the sibling repo.
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -50,6 +53,12 @@ for _path in reversed(_IMPORT_PATHS):
     sys.path.insert(0, _path)
 
 from window_ui import Ui_MainWindow  # noqa: E402
+
+
+def resource_path(relative_path):
+    """Return an application resource path in source and PyInstaller builds."""
+    root = Path(getattr(sys, "_MEIPASS", _HERE))
+    return root / relative_path
 
 
 def default_output_directory():
@@ -74,6 +83,20 @@ def configure_matplotlib_cache():
     except OSError:
         return
     os.environ.setdefault("MPLCONFIGDIR", str(cache_dir))
+
+
+def configure_windows_app_id():
+    """Give the Windows taskbar a stable identity for the application icon."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            APP_USER_MODEL_ID
+        )
+    except (AttributeError, OSError):
+        pass
 
 
 def find_csv_channels(file_path):
@@ -403,13 +426,18 @@ class MainWindow(QMainWindow):
 
 
 def main():
+    configure_windows_app_id()
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setApplicationDisplayName(APP_NAME)
     app.setApplicationVersion(__version__)
     app.setOrganizationName("GFCI")
+    app_icon = QIcon(str(resource_path(APP_ICON_RELATIVE_PATH)))
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
     configure_matplotlib_cache()
     window = MainWindow()
+    window.setWindowIcon(app_icon)
     window.show()
     sys.exit(app.exec())
 

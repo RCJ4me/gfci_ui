@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>GFCI Oscilloscope Data Analysis Tool (UL101 Sec.6)</string>
+   <string>Torch Dragon</string>
   </property>
   <widget class="QWidget" name="centralwidget">
    <layout class="QHBoxLayout" name="mainLayout">
