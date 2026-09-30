@@ -16,9 +16,4 @@ scripts
 raw_data
 /export/
 /.codex/
-gfci_gui.spec
-build_windows.bat
-build_macos.command
-PACKAGING.md
-/pic/
 
