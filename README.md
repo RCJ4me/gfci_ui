@@ -7,6 +7,11 @@ The analysis engine lives in the sibling repository `../gfci_analysis_refactored
 package is placed inside this folder it takes precedence, which makes it easy to
 try out engine edits locally before syncing them back.
 
+The reader supports Tektronix MSO44 and MSO54 CSV exports, including
+single-channel captures such as `CH4` and decimated thumbnail exports. Channel
+names and vertical units are read from each source CSV rather than assumed from
+the previous three-channel data format.
+
 ## Directory Structure
 
 ```
@@ -61,10 +66,21 @@ notes, and troubleshooting.
 
 ## Usage
 
-1. **Add CSV**: Click "Add CSV" to select one or more MSO54 oscilloscope export files.
-2. **Set parameters**: analysis channel (CH1/CH2/CH3, filled from the CSV headers), time range, FFT frequency range, base over-limit threshold (mV), image format, output directory. The analysis engine scales this base threshold by frequency before comparing FFT peaks.
+1. **Add CSV**: Click "Add CSV" to select one or more Tektronix MSO44 or MSO54 export files.
+2. **Set parameters**: choose a channel populated from the loaded CSV headers (for example, `CH4`), the time range, FFT frequency range, base over-limit threshold, image format, and output directory. The threshold label follows the source unit: `mV` for voltage channels and `mA` for current channels. The analysis engine scales the threshold by frequency before comparing FFT peaks.
 3. **Run analysis**: Click "Run Analysis". The right-hand tabs show the time-domain plot, FFT plot, a rendered Markdown report, and the log.
 4. Output files (PNG/SVG, CSV, Markdown report) are saved below the "Output Directory" in a subdirectory named after each source CSV, for example `Output Directory/SD_heat_120F_COMPRESSORON_000_ALL/`.
+
+The channel list is rebuilt whenever files are added, removed, or cleared. If
+multiple files have different channel sets, the selected channel is applied only
+to files that contain it; the other files are skipped and reported in the log.
+Files using voltage (`V`) and current (`A`) must be analyzed in separate runs so
+one threshold value always has one physical meaning.
+
+When `Record Length` and `Sample Interval` show that a CSV is a decimated
+thumbnail export, the reader uses the metadata record duration and actual row
+count to calculate the effective sample interval. This keeps the three-second
+analysis window meaningful for MSO44 captures such as `Tek002.csv`.
 
 While a run is in progress the progress bar advances through the individual pipeline
 stages (reading the CSV, Let-go filtering, each plot, each CSV export, the FFT

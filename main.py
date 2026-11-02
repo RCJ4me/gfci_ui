@@ -13,9 +13,9 @@ After layout changes, regenerate window_ui.py:
     pyuic6 -o window_ui.py window.ui
 """
 
+import csv
 import inspect
 import os
-import re
 import sys
 import traceback
 from pathlib import Path
@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 )
 
 # Shown in the bottom-left corner of the window (see window.ui / lbl_version).
-__version__ = "0.0.2.1"
+__version__ = "0.0.3.1"
 APP_NAME = "GFCI Analyzer"
 APP_USER_MODEL_ID = "GFCI.Analyzer"
 APP_ICON_RELATIVE_PATH = Path("assets") / "torchdragon.ico"
@@ -99,17 +99,44 @@ def configure_windows_app_id():
         pass
 
 
-def find_csv_channels(file_path):
-    """Return the channel names (e.g. ['CH1', 'CH2', 'CH3']) declared in a CSV."""
+def read_csv_structure(file_path):
+    """Return the channel names and vertical units declared in a CSV."""
+    channels = []
+    units = set()
     try:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
-                if "TIME" in line.upper():
-                    names = [name.strip() for name in line.split(",")]
-                    return [n for n in names if re.fullmatch(r"CH\d+", n, re.IGNORECASE)]
-    except OSError:
-        return []
-    return []
+        with open(
+            file_path,
+            "r",
+            encoding="utf-8-sig",
+            errors="ignore",
+            newline="",
+        ) as handle:
+            for row in csv.reader(handle):
+                if not row:
+                    continue
+                key = row[0].strip().casefold()
+                if key == "time":
+                    seen = set()
+                    for value in row[1:]:
+                        name = value.strip()
+                        if name and name.casefold() not in seen:
+                            seen.add(name.casefold())
+                            channels.append(name)
+                    break
+                if key == "vertical units":
+                    for value in row[1:]:
+                        unit = value.strip()
+                        if unit and unit.casefold() != "vertical units":
+                            units.add(unit.upper())
+    except (OSError, csv.Error):
+        return [], set()
+    return channels, units
+
+
+def find_csv_channels(file_path):
+    """Return channel names declared in a CSV."""
+    channels, _ = read_csv_structure(file_path)
+    return channels
 
 
 class AnalysisWorker(QThread):
@@ -119,7 +146,7 @@ class AnalysisWorker(QThread):
     stage = pyqtSignal(str)             # current pipeline stage, for the status bar
     log = pyqtSignal(str)               # log line
     file_done = pyqtSignal(str, str, str, str)  # filename, time plot, FFT plot, report
-    finished_ok = pyqtSignal(int, int)  # success count, failure count
+    finished_ok = pyqtSignal(int, int, int)  # success, failure, skipped
 
     def __init__(self, file_paths, params, parent=None):
         super().__init__(parent)
@@ -144,7 +171,7 @@ class AnalysisWorker(QThread):
                 "Make sure the bundled gfci_analysis/ package is present and "
                 "numpy/pandas/scipy/matplotlib are installed."
             )
-            self.finished_ok.emit(0, len(self.file_paths))
+            self.finished_ok.emit(0, len(self.file_paths), 0)
             return
 
         analysis_cfg = AnalysisConfig(
@@ -152,7 +179,7 @@ class AnalysisWorker(QThread):
             time_end=self.params["time_end"],
             fft_min_frequency=self.params["fft_min"],
             fft_max_frequency=self.params["fft_max"],
-            # The GUI collects the threshold in mV; the analysis core expects V.
+            # The GUI collects in thousandths of the source unit (mV or mA).
             overlimit_threshold=self.params["overlimit"] / 1000.0,
         )
         plot_cfg = PlotConfig(
@@ -174,10 +201,40 @@ class AnalysisWorker(QThread):
 
         success_count = 0
         fail_count = 0
+        skipped_count = 0
         total = len(self.file_paths)
+        selected_channel = self.params["channel"].casefold()
 
         for idx, file_path in enumerate(self.file_paths):
             base = os.path.basename(file_path)
+            channels, units = read_csv_structure(file_path)
+
+            if len(units) > 1:
+                fail_count += 1
+                self.progress.emit(int((idx + 1) / total * 100))
+                self.log.emit(
+                    f"!!! Analysis failed {base}: the CSV contains mixed "
+                    f"vertical units ({', '.join(sorted(units))})."
+                )
+                continue
+
+            if not channels:
+                fail_count += 1
+                self.progress.emit(int((idx + 1) / total * 100))
+                self.log.emit(
+                    f"!!! Analysis failed {base}: no channel columns were found."
+                )
+                continue
+
+            if selected_channel not in {name.casefold() for name in channels}:
+                skipped_count += 1
+                self.progress.emit(int((idx + 1) / total * 100))
+                self.log.emit(
+                    f"Skipped {base}: channel {self.params['channel']} "
+                    f"is not present (available: {', '.join(channels)})."
+                )
+                continue
+
             self.log.emit(f"[{idx + 1}/{total}] Analyzing: {base}")
 
             def report_stage(fraction, label, idx=idx, base=base):
@@ -186,7 +243,7 @@ class AnalysisWorker(QThread):
                 self.stage.emit(f"{base} - {label}")
 
             try:
-                run_kwargs = {"channel": self.params["channel"]}
+                run_kwargs = {"channel": selected_channel}
                 if reports_stages:
                     run_kwargs["progress_callback"] = report_stage
                 result = run_pipeline(
@@ -209,8 +266,11 @@ class AnalysisWorker(QThread):
                 self.log.emit(f"!!! Analysis failed {base}: {exc}")
                 self.log.emit(traceback.format_exc())
 
-        self.log.emit(f"All done: {success_count} succeeded, {fail_count} failed")
-        self.finished_ok.emit(success_count, fail_count)
+        self.log.emit(
+            f"All done: {success_count} succeeded, {fail_count} failed, "
+            f"{skipped_count} skipped"
+        )
+        self.finished_ok.emit(success_count, fail_count, skipped_count)
 
 
 class MainWindow(QMainWindow):
@@ -259,6 +319,7 @@ class MainWindow(QMainWindow):
 
     def _on_channel_changed(self, _text):
         self._channel_user_selected = True
+        self._update_threshold_label()
 
     # ---------- Progress ----------
     # While a stage runs the bar is allowed to creep this far past the value
@@ -312,25 +373,73 @@ class MainWindow(QMainWindow):
     def _refresh_channels(self):
         """Offer the channel names actually present in the loaded CSV files."""
         names = []
+        seen = set()
         for i in range(self.ui.list_files.count()):
-            for name in find_csv_channels(self.ui.list_files.item(i).text()):
-                if name not in names:
+            channels, _ = read_csv_structure(
+                self.ui.list_files.item(i).text()
+            )
+            for name in channels:
+                key = name.casefold()
+                if key not in seen:
+                    seen.add(key)
                     names.append(name)
-        if not names:
-            return
+
         previous = self.ui.combo_channel.currentText()
-        keep = self._channel_user_selected and previous in names
-        self.ui.combo_channel.clear()
-        self.ui.combo_channel.addItems(names)
-        if keep:
-            self.ui.combo_channel.setCurrentText(previous)
-        elif "CH3" in names:
-            self.ui.combo_channel.setCurrentText("CH3")
+        keep = self._channel_user_selected and any(
+            previous.casefold() == name.casefold() for name in names
+        )
+
+        self.ui.combo_channel.blockSignals(True)
+        try:
+            self.ui.combo_channel.clear()
+            self.ui.combo_channel.addItems(names)
+            if keep:
+                self.ui.combo_channel.setCurrentText(previous)
+            elif any(name.casefold() == "ch3" for name in names):
+                self.ui.combo_channel.setCurrentText("CH3")
+        finally:
+            self.ui.combo_channel.blockSignals(False)
+
+        if not names:
+            self._channel_user_selected = False
+        self._update_threshold_label()
+
+    def _selected_value_unit(self):
+        selected = self.ui.combo_channel.currentText().casefold()
+        if not selected:
+            return "V"
+
+        units = set()
+        for i in range(self.ui.list_files.count()):
+            channels, file_units = read_csv_structure(
+                self.ui.list_files.item(i).text()
+            )
+            if any(name.casefold() == selected for name in channels):
+                units.update(file_units or {"V"})
+
+        if not units:
+            return "V"
+        if len(units) == 1:
+            return next(iter(units))
+        return None
+
+    def _update_threshold_label(self):
+        unit = self._selected_value_unit()
+        if unit == "A":
+            suffix = "mA"
+        elif unit == "V":
+            suffix = "mV"
+        else:
+            suffix = "mixed V/A"
+        self.ui.lbl_overlimit.setText(
+            f"Base Over-limit Threshold ({suffix})"
+        )
 
     def remove_file(self):
         row = self.ui.list_files.currentRow()
         if row >= 0:
             self.ui.list_files.takeItem(row)
+            self._refresh_channels()
 
     def clear_files(self):
         self.ui.list_files.clear()
@@ -354,12 +463,64 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Notice", "Please add CSV files to analyze first.")
             return
 
+        all_units = set()
+        mixed_unit_files = []
+        for file_path in files:
+            channels, units = read_csv_structure(file_path)
+            if not channels:
+                continue
+            if len(units) > 1:
+                mixed_unit_files.append(os.path.basename(file_path))
+            all_units.update(units or {"V"})
+
+        if mixed_unit_files:
+            QMessageBox.warning(
+                self,
+                "Mixed Units",
+                "These files declare multiple vertical units:\n"
+                + "\n".join(mixed_unit_files),
+            )
+            return
+        if len(all_units) > 1:
+            QMessageBox.warning(
+                self,
+                "Mixed Units",
+                "The selected files mix voltage (V) and current (A). "
+                "Analyze them in separate runs so the threshold unit is unambiguous.",
+            )
+            return
+
+        selected_channel = self.ui.combo_channel.currentText().strip()
+        if not selected_channel:
+            QMessageBox.warning(
+                self,
+                "Notice",
+                "No analysis channel is available in the selected CSV files.",
+            )
+            return
+        matching_files = [
+            file_path
+            for file_path in files
+            if selected_channel.casefold()
+            in {
+                name.casefold()
+                for name in read_csv_structure(file_path)[0]
+            }
+        ]
+        if not matching_files:
+            QMessageBox.warning(
+                self,
+                "Notice",
+                f"Channel {selected_channel} is not present in the selected files.",
+            )
+            return
+
         params = {
             "time_start": self.ui.spin_time_start.value(),
             "time_end": self.ui.spin_time_end.value(),
             "fft_min": self.ui.spin_fft_min.value(),
             "fft_max": self.ui.spin_fft_max.value(),
-            "channel": self.ui.combo_channel.currentText().lower() or "ch3",
+            "channel": selected_channel.casefold(),
             "overlimit": self.ui.spin_overlimit.value(),
             "picture_format": self.ui.combo_format.currentIndex(),
             "output_dir": self.ui.edit_output_dir.text().strip() or "./export",
@@ -389,11 +550,13 @@ class MainWindow(QMainWindow):
         if report_text:
             self.show_report(report_text)
 
-    def on_finished(self, success, fail):
+    def on_finished(self, success, fail, skipped):
         self.ui.btn_run.setEnabled(True)
         self.set_progress(100)
         self.statusBar().showMessage(
-            f"Analysis finished: {success} succeeded, {fail} failed", 8000
+            f"Analysis finished: {success} succeeded, {fail} failed, "
+            f"{skipped} skipped",
+            8000,
         )
 
     def show_report(self, report_text: str):
