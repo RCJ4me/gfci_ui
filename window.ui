@@ -175,14 +175,14 @@
              <number>100000000</number>
             </property>
             <property name="value">
-             <number>100000</number>
+             <number>50000</number>
             </property>
            </widget>
           </item>
           <item row="5" column="0">
            <widget class="QLabel" name="lbl_overlimit">
             <property name="text">
-             <string>Base Over-limit Threshold (mV)</string>
+             <string>Upper Limit IIU (mV)</string>
             </property>
            </widget>
           </item>
@@ -198,7 +198,7 @@
              <double>0.500000000000000</double>
             </property>
             <property name="value">
-             <double>3.000000000000000</double>
+             <double>3.500000000000000</double>
             </property>
            </widget>
           </item>

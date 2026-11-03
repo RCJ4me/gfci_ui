@@ -27,8 +27,9 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QFileDialog, QMessageBox,
 )
 
+
 # Shown in the bottom-left corner of the window (see window.ui / lbl_version).
-__version__ = "0.0.3.1"
+__version__ = "0.0.3.2"
 APP_NAME = "GFCI Analyzer"
 APP_USER_MODEL_ID = "GFCI.Analyzer"
 APP_ICON_RELATIVE_PATH = Path("assets") / "torchdragon.ico"
@@ -52,7 +53,7 @@ for _path in _ANALYZER_CANDIDATES + [_HERE]:
 for _path in reversed(_IMPORT_PATHS):
     sys.path.insert(0, _path)
 
-from window_ui import Ui_MainWindow  # noqa: E402
+from window import Ui_MainWindow  # noqa: E402
 
 
 def resource_path(relative_path):

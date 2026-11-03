@@ -26,7 +26,7 @@ if not (ENGINE_PACKAGE / "__init__.py").is_file():
 sys.path.insert(0, str(ENGINE_ROOT))
 hiddenimports = sorted(collect_submodules("gfci_analysis"))
 
-APP_NAME = os.environ.get("GFCI_APP_NAME", "GFCI Analyzer")
+APP_NAME = os.environ.get("GFCI_APP_NAME", "TorchDragon")
 DEFAULT_ICON = PROJECT_ROOT / "assets" / "torchdragon.ico"
 APP_ICON = os.environ.get("GFCI_APP_ICON")
 if not APP_ICON and sys.platform == "win32" and DEFAULT_ICON.is_file():
@@ -43,7 +43,7 @@ if DEFAULT_ICON.is_file():
 # Windows version resource. Embedding company/product/version metadata makes the
 # executable look like a legitimate application and reduces the chance of
 # SmartScreen / antivirus heuristics flagging it as suspicious.
-APP_VERSION = os.environ.get("GFCI_APP_VERSION", "0.0.1.1")
+APP_VERSION = os.environ.get("GFCI_APP_VERSION", "0.0.3.1")
 APP_PUBLISHER = os.environ.get("GFCI_APP_PUBLISHER", "GFCI")
 _version_parts = [p for p in APP_VERSION.split(".") if p.isdigit()]
 while len(_version_parts) < 4:
@@ -140,7 +140,7 @@ if sys.platform == "darwin":
         ),
         info_plist={
             "CFBundleDisplayName": APP_NAME,
-            "CFBundleShortVersionString": "0.0.1.1",
+            "CFBundleShortVersionString": "0.0.3.2",
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
         },
