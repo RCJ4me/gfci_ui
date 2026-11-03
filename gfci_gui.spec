@@ -43,7 +43,7 @@ if DEFAULT_ICON.is_file():
 # Windows version resource. Embedding company/product/version metadata makes the
 # executable look like a legitimate application and reduces the chance of
 # SmartScreen / antivirus heuristics flagging it as suspicious.
-APP_VERSION = os.environ.get("GFCI_APP_VERSION", "0.0.3.1")
+APP_VERSION = os.environ.get("GFCI_APP_VERSION", "0.0.3.2")
 APP_PUBLISHER = os.environ.get("GFCI_APP_PUBLISHER", "GFCI")
 _version_parts = [p for p in APP_VERSION.split(".") if p.isdigit()]
 while len(_version_parts) < 4:
