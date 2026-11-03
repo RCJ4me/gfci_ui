@@ -2,13 +2,13 @@
 
 ## About Torch Dragon
 
-![TorchDragon](.\Pic\ico.png)
+<img src="./Pic/ico.png" alt="ico" width="256" height="256">
 
 
 **<mark>TorchDragon</mark>** is a Windows GUI tool that analyzes GFCI Interoperability V1 raw results from oscilloscope log data (CSV).
 
 
-![TorchDragon UI](.\Pic\UI.png)
+![TorchDragon UI](./Pic/UI.png)
 ----
 
 ## The main functions
@@ -59,11 +59,11 @@ Log the V1 data only. TorchDragon will simulate the V2 RMS and FFT analysis.
 
 * 1. Measurement Instrument for GFCI Interoperability Test Intended for Connection to 120 V Circuits
 
-![120VAC System](.\Pic\120.png)
+![120VAC System](./Pic/120.png)
      
 * 2. Measurement Instrument for GFCI Interoperability Test Intended for Connection to 208/230 V Circuits 
 
-![208/230VAC System](.\Pic\208230.png)
+![208/230VAC System](./Pic/208230.png)
 
 -----
 
@@ -73,7 +73,7 @@ Log the V1 data only. TorchDragon will simulate the V2 RMS and FFT analysis.
 
 **P/N**: 8122
 
-![208/230VAC System](.\Pic\ct.png)
+![208/230VAC System](./Pic/ct.png)
 
 [Pearson 8122 Spec](https://pearsonelectronics.com/pdf/8122.pdf)
 
