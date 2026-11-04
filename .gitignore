@@ -14,5 +14,7 @@ scripts
 .gitignore
 .python-version
 raw_data
-/.codex/
 /export/
+/.codex/
+
+/tests/

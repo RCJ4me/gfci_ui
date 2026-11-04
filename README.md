@@ -2,7 +2,9 @@
 
 ## About Torch Dragon
 
-<img src="./Pic/ico.png" alt="ico" width="256" height="256">
+<div align="center">
+  <img src="./Pic/ico.png" alt="ico" width="256" height="256">
+</div>
 
 
 **<mark>TorchDragon</mark>** is a Windows GUI tool that analyzes GFCI Interoperability V1 raw results from oscilloscope log data (CSV).
@@ -100,7 +102,7 @@ Log the V1 data only. TorchDragon will simulate the V2 RMS and FFT analysis.
 
 ### Oscilloscope Setting
 
-The sampling interval should be <mark>1 M/s</mark>. If the sampling frequency is low, distortion will occur in the Fast Fourier Transform data, thereby compromising the accuracy of the test.
+The sampling interval should be <mark> >= 1 M/s</mark>. If the sampling frequency is low, distortion will occur in the Fast Fourier Transform data, thereby compromising the accuracy of the test.
 
 ----
 
