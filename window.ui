@@ -34,7 +34,7 @@
      <widget class="QGroupBox" name="groupBox_input">
       <property name="minimumSize">
        <size>
-        <width>360</width>
+        <width>320</width>
         <height>0</height>
        </size>
       </property>
@@ -320,18 +320,28 @@
     </item>
     <item>
      <widget class="QTabWidget" name="tab_results">
-      <property name="currentIndex">
-       <number>1</number>
-      </property>
-      <widget class="QWidget" name="tab_time">
+      <widget class="QWidget" name="tab_curve">
        <attribute name="title">
-        <string>Time-Domain Plot</string>
+        <string>Curve Plot</string>
        </attribute>
-       <layout class="QVBoxLayout" name="timeTabLayout">
+       <layout class="QVBoxLayout" name="curveTabLayout">
         <item>
-         <layout class="QHBoxLayout" name="timeToolbarLayout">
+         <layout class="QHBoxLayout" name="curveToolbarLayout">
           <item>
-           <spacer name="timeToolbarSpacer2">
+           <widget class="QComboBox" name="combo_curve_image">
+            <property name="minimumSize">
+             <size>
+              <width>280</width>
+              <height>0</height>
+             </size>
+            </property>
+            <property name="sizeAdjustPolicy">
+             <enum>QComboBox::AdjustToMinimumContentsLengthWithIcon</enum>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="curveToolbarSpacer">
             <property name="orientation">
              <enum>Qt::Horizontal</enum>
             </property>
@@ -344,7 +354,7 @@
            </spacer>
           </item>
           <item>
-           <widget class="QToolButton" name="btn_zoom_in_time">
+           <widget class="QToolButton" name="btn_zoom_in_curve">
             <property name="minimumSize">
              <size>
               <width>32</width>
@@ -363,20 +373,7 @@
            </widget>
           </item>
           <item>
-           <spacer name="timeToolbarSpacer4">
-            <property name="orientation">
-             <enum>Qt::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-          <item>
-           <widget class="QToolButton" name="btn_zoom_out_time">
+           <widget class="QToolButton" name="btn_zoom_out_curve">
             <property name="minimumSize">
              <size>
               <width>32</width>
@@ -395,20 +392,7 @@
            </widget>
           </item>
           <item>
-           <spacer name="timeToolbarSpacer3">
-            <property name="orientation">
-             <enum>Qt::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-          <item>
-           <widget class="QToolButton" name="btn_fit_time">
+           <widget class="QToolButton" name="btn_fit_curve">
             <property name="minimumSize">
              <size>
               <width>40</width>
@@ -426,150 +410,10 @@
             </property>
            </widget>
           </item>
-          <item>
-           <spacer name="timeToolbarSpacer">
-            <property name="orientation">
-             <enum>Qt::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
          </layout>
         </item>
         <item>
-         <widget class="ImageView" name="view_time">
-          <property name="alignment">
-           <set>Qt::AlignCenter</set>
-          </property>
-         </widget>
-        </item>
-       </layout>
-      </widget>
-      <widget class="QWidget" name="tab_fft">
-       <attribute name="title">
-        <string>FFT Plot</string>
-       </attribute>
-       <layout class="QVBoxLayout" name="fftTabLayout">
-        <item>
-         <layout class="QHBoxLayout" name="fftToolbarLayout">
-          <item>
-           <spacer name="horizontalSpacer_3">
-            <property name="orientation">
-             <enum>Qt::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-          <item>
-           <widget class="QToolButton" name="btn_zoom_in_fft">
-            <property name="minimumSize">
-             <size>
-              <width>32</width>
-              <height>24</height>
-             </size>
-            </property>
-            <property name="toolTip">
-             <string>Zoom in</string>
-            </property>
-            <property name="text">
-             <string>+</string>
-            </property>
-            <property name="toolButtonStyle">
-             <enum>Qt::ToolButtonTextOnly</enum>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <spacer name="horizontalSpacer">
-            <property name="orientation">
-             <enum>Qt::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-          <item>
-           <widget class="QToolButton" name="btn_zoom_out_fft">
-            <property name="minimumSize">
-             <size>
-              <width>32</width>
-              <height>24</height>
-             </size>
-            </property>
-            <property name="toolTip">
-             <string>Zoom out</string>
-            </property>
-            <property name="text">
-             <string>-</string>
-            </property>
-            <property name="toolButtonStyle">
-             <enum>Qt::ToolButtonTextOnly</enum>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <spacer name="horizontalSpacer_2">
-            <property name="orientation">
-             <enum>Qt::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-          <item>
-           <widget class="QToolButton" name="btn_fit_fft">
-            <property name="minimumSize">
-             <size>
-              <width>40</width>
-              <height>24</height>
-             </size>
-            </property>
-            <property name="toolTip">
-             <string>Fit to width</string>
-            </property>
-            <property name="text">
-             <string>Fit</string>
-            </property>
-            <property name="toolButtonStyle">
-             <enum>Qt::ToolButtonTextOnly</enum>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <spacer name="fftToolbarSpacer">
-            <property name="orientation">
-             <enum>Qt::Horizontal</enum>
-            </property>
-            <property name="sizeHint" stdset="0">
-             <size>
-              <width>40</width>
-              <height>20</height>
-             </size>
-            </property>
-           </spacer>
-          </item>
-         </layout>
-        </item>
-        <item>
-         <widget class="ImageView" name="view_fft">
+         <widget class="ImageView" name="view_curve">
           <property name="alignment">
            <set>Qt::AlignCenter</set>
           </property>
@@ -579,9 +423,39 @@
       </widget>
       <widget class="QWidget" name="tab_report">
        <attribute name="title">
-        <string>Report</string>
+        <string>Test Report</string>
        </attribute>
        <layout class="QVBoxLayout" name="reportTabLayout">
+        <item>
+         <layout class="QHBoxLayout" name="reportToolbarLayout">
+          <item>
+           <spacer name="reportToolbarSpacer">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="btn_open_export_folder">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>28</height>
+             </size>
+            </property>
+            <property name="text">
+             <string>Check Export Folder</string>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </item>
         <item>
          <widget class="QTextBrowser" name="txt_report">
           <property name="openExternalLinks">

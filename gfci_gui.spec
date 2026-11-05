@@ -1,5 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import ast
 import os
 import sys
 from pathlib import Path
@@ -8,6 +9,39 @@ from PyInstaller.utils.hooks import collect_submodules
 
 
 PROJECT_ROOT = Path(SPECPATH).resolve()
+MAIN_FILE = PROJECT_ROOT / "main.py"
+
+
+def read_app_version() -> str:
+    """Read main.py.__version__ without importing the PyQt application."""
+    tree = ast.parse(MAIN_FILE.read_text(encoding="utf-8"), filename=str(MAIN_FILE))
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            value_node = node.value
+        elif isinstance(node, ast.AnnAssign):
+            targets = [node.target]
+            value_node = node.value
+        else:
+            continue
+        if any(
+            isinstance(target, ast.Name) and target.id == "__version__"
+            for target in targets
+        ):
+            try:
+                value = ast.literal_eval(value_node)
+            except (TypeError, ValueError) as exc:
+                raise SystemExit(
+                    f"Could not parse __version__ in {MAIN_FILE}: {exc}"
+                ) from exc
+            if not isinstance(value, str) or not value.strip():
+                raise SystemExit(
+                    f"__version__ in {MAIN_FILE} must be a non-empty string."
+                )
+            return value.strip()
+    raise SystemExit(f"Could not find __version__ in {MAIN_FILE}.")
+
+
 ENGINE_ROOT = Path(
     os.environ.get(
         "GFCI_ANALYSIS_ROOT",
@@ -52,7 +86,7 @@ if DEFAULT_ICON.is_file():
 # Windows version resource. Embedding company/product/version metadata makes the
 # executable look like a legitimate application and reduces the chance of
 # SmartScreen / antivirus heuristics flagging it as suspicious.
-APP_VERSION = os.environ.get("GFCI_APP_VERSION", "0.0.3.2")
+APP_VERSION = read_app_version()
 APP_PUBLISHER = os.environ.get("GFCI_APP_PUBLISHER", "GFCI")
 _version_parts = [p for p in APP_VERSION.split(".") if p.isdigit()]
 while len(_version_parts) < 4:
@@ -149,7 +183,7 @@ if sys.platform == "darwin":
         ),
         info_plist={
             "CFBundleDisplayName": APP_NAME,
-            "CFBundleShortVersionString": "0.0.3.2",
+            "CFBundleShortVersionString": APP_VERSION,
             "NSHighResolutionCapable": True,
             "LSMinimumSystemVersion": "11.0",
         },

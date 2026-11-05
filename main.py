@@ -21,15 +21,15 @@ import traceback
 from pathlib import Path
 
 import markdown
-from PyQt6.QtCore import QStandardPaths, QThread, QTimer, Qt, pyqtSignal
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import QStandardPaths, QThread, QTimer, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QFileDialog, QMessageBox,
+    QApplication, QMainWindow, QFileDialog, QMessageBox, QStyle,
 )
 
 
 # Shown in the bottom-left corner of the window (see window.ui / lbl_version).
-__version__ = "0.0.3.2"
+__version__ = "0.0.3.3"
 APP_NAME = "GFCI Analyzer"
 APP_USER_MODEL_ID = "GFCI.Analyzer"
 APP_ICON_RELATIVE_PATH = Path("assets") / "torchdragon.ico"
@@ -146,7 +146,7 @@ class AnalysisWorker(QThread):
     progress = pyqtSignal(int)          # 0-100, overall across all files
     stage = pyqtSignal(str)             # current pipeline stage, for the status bar
     log = pyqtSignal(str)               # log line
-    file_done = pyqtSignal(str, str, str, str)  # filename, time plot, FFT plot, report
+    file_done = pyqtSignal(str, str, str, str, str, str, str)
     finished_ok = pyqtSignal(int, int, int)  # success, failure, skipped
 
     def __init__(self, file_paths, params, parent=None):
@@ -252,13 +252,17 @@ class AnalysisWorker(QThread):
                     analysis_cfg=analysis_cfg,
                     plot_cfg=plot_cfg,
                     output_cfg=output_cfg,
+                    software_version=__version__,
                     **run_kwargs,
                 )
                 self.progress.emit(int((idx + 1) / total * 100))
                 self.file_done.emit(
                     base,
                     result.time_plot_path or "",
+                    getattr(result, "time_window_plot_path", None) or "",
+                    getattr(result, "raw_fft_plot_path", None) or "",
                     result.fft_plot_path or "",
+                    getattr(result, "report_path", None) or "",
                     result.report_text or "",
                 )
                 success_count += 1
@@ -279,9 +283,13 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
+        self.ui.mainLayout.setStretch(0, 39)
+        self.ui.mainLayout.setStretch(1, 61)
 
         self.worker = None
         self._channel_user_selected = False
+        self._curve_images = []
+        self._current_report_path = None
         self._progress_target = 0
         self._progress_ceiling = 0
         self._progress_ticks = 0
@@ -303,20 +311,49 @@ class MainWindow(QMainWindow):
         self.ui.btn_clear_files.clicked.connect(self.clear_files)
         self.ui.btn_browse_dir.clicked.connect(self.browse_output_dir)
         self.ui.btn_run.clicked.connect(self.run_analysis)
+        self.ui.btn_open_export_folder.clicked.connect(
+            self.open_export_folder
+        )
         self.ui.combo_channel.currentTextChanged.connect(
             self._on_channel_changed
         )
 
     def _setup_plot_views(self):
-        """Wire the zoom controls and empty-state text of both plot tabs."""
-        self.ui.view_time.set_placeholder("No time-domain plot generated yet.")
-        self.ui.view_fft.set_placeholder("No FFT plot generated yet.")
-        self.ui.btn_zoom_in_time.clicked.connect(self.ui.view_time.zoom_in)
-        self.ui.btn_zoom_out_time.clicked.connect(self.ui.view_time.zoom_out)
-        self.ui.btn_fit_time.clicked.connect(self.ui.view_time.fit_to_width)
-        self.ui.btn_zoom_in_fft.clicked.connect(self.ui.view_fft.zoom_in)
-        self.ui.btn_zoom_out_fft.clicked.connect(self.ui.view_fft.zoom_out)
-        self.ui.btn_fit_fft.clicked.connect(self.ui.view_fft.fit_to_width)
+        """Wire the curve selector, zoom controls, and export-folder button."""
+        self.ui.view_curve.set_placeholder(
+            "No curve image generated in this run."
+        )
+        self.ui.combo_curve_image.setPlaceholderText(
+            "No exported images in this run"
+        )
+        self.ui.combo_curve_image.currentIndexChanged.connect(
+            self._on_curve_image_changed
+        )
+        self.ui.btn_zoom_in_curve.clicked.connect(
+            self.ui.view_curve.zoom_in
+        )
+        self.ui.btn_zoom_out_curve.clicked.connect(
+            self.ui.view_curve.zoom_out
+        )
+        self.ui.btn_fit_curve.clicked.connect(
+            self.ui.view_curve.fit_to_width
+        )
+        self.ui.btn_open_export_folder.setIcon(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
+        )
+        self.ui.btn_open_export_folder.setEnabled(False)
+
+    def _reset_curve_gallery(self):
+        """Discard images from the previous run before starting a new one."""
+        self._curve_images.clear()
+        self.ui.combo_curve_image.clear()
+        self.ui.view_curve.clear_image()
+
+    def _on_curve_image_changed(self, index):
+        path = self.ui.combo_curve_image.itemData(index)
+        if not path:
+            return
+        self.show_image(self.ui.view_curve, str(path))
 
     def _on_channel_changed(self, _text):
         self._channel_user_selected = True
@@ -529,6 +566,9 @@ class MainWindow(QMainWindow):
 
         self.ui.txt_log.clear()
         self.ui.txt_report.clear()
+        self._reset_curve_gallery()
+        self._current_report_path = None
+        self.ui.btn_open_export_folder.setEnabled(False)
         self.set_progress(0)
         self.log(f"Starting analysis of {len(files)} file(s) ...")
         self.log(f"FFT analysis channel: {self.ui.combo_channel.currentText()}")
@@ -542,14 +582,85 @@ class MainWindow(QMainWindow):
         self.worker.finished_ok.connect(self.on_finished)
         self.worker.start()
 
-    def on_file_done(self, base, time_png, fft_png, report_text):
+    def on_file_done(
+        self,
+        base,
+        time_png,
+        time_window_png,
+        raw_fft_png,
+        fft_png,
+        report_path,
+        report_text,
+    ):
         self.log(f"Finished: {base}")
-        if time_png and os.path.exists(time_png):
-            self.show_image(self.ui.view_time, time_png)
-        if fft_png and os.path.exists(fft_png):
-            self.show_image(self.ui.view_fft, fft_png)
+
+        new_images = [
+            path
+            for path in (
+                time_png,
+                time_window_png,
+                raw_fft_png,
+                fft_png,
+            )
+            if path and os.path.exists(path)
+        ]
+        combo = self.ui.combo_curve_image
+        post_letgo_index = -1
+        combo.blockSignals(True)
+        try:
+            for path in new_images:
+                self._curve_images.append(path)
+                combo.addItem(Path(path).name, path)
+                if path == fft_png:
+                    post_letgo_index = combo.count() - 1
+        finally:
+            combo.blockSignals(False)
+
+        if combo.count():
+            target_index = (
+                post_letgo_index
+                if post_letgo_index >= 0
+                else combo.count() - 1
+            )
+            if combo.currentIndex() == target_index:
+                self._on_curve_image_changed(combo.currentIndex())
+            else:
+                combo.setCurrentIndex(target_index)
+
+        self._current_report_path = report_path or None
+        report_file = Path(report_path) if report_path else None
+        can_open_export = bool(
+            report_file
+            and report_file.is_file()
+            and report_file.parent.is_dir()
+        )
+        self.ui.btn_open_export_folder.setEnabled(can_open_export)
+
         if report_text:
             self.show_report(report_text)
+
+    def open_export_folder(self):
+        if not self._current_report_path:
+            QMessageBox.warning(
+                self,
+                "Export Folder",
+                "No successful analysis report is available yet.",
+            )
+            return
+
+        export_dir = Path(self._current_report_path).parent
+        if not export_dir.is_dir():
+            message = f"The export folder does not exist:\n{export_dir}"
+            self.log(message)
+            QMessageBox.warning(self, "Export Folder", message)
+            return
+
+        if not QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(export_dir.resolve()))
+        ):
+            message = f"Could not open the export folder:\n{export_dir}"
+            self.log(message)
+            QMessageBox.warning(self, "Export Folder", message)
 
     def on_finished(self, success, fail, skipped):
         self.ui.btn_run.setEnabled(True)
