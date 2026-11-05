@@ -65,10 +65,12 @@ uv run --extra build python scripts\build_app.py `
 ```bash
 uv run --extra build python scripts/build_app.py \
   --app-name "GFCI Analyzer" \
-  --icon path/to/app.icns
+  --icon assets/torchdragon.ico
 ```
 
-Windows 使用 `.ico` 图标，macOS 使用 `.icns` 图标。
+默认使用 `assets/torchdragon.ico`。Windows 会直接嵌入 `.ico`；macOS 构建脚本
+会自动将其转换为多尺寸 `.icns`，确保 Finder 和 Dock 显示应用图标。也可以直接
+为 macOS 传入已有的 `.icns` 文件。
 
 ## 避免 Windows 的“已保护你的电脑”警告
 

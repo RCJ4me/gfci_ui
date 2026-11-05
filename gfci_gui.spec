@@ -29,12 +29,21 @@ hiddenimports = sorted(collect_submodules("gfci_analysis"))
 APP_NAME = os.environ.get("GFCI_APP_NAME", "TorchDragon")
 DEFAULT_ICON = PROJECT_ROOT / "assets" / "torchdragon.ico"
 APP_ICON = os.environ.get("GFCI_APP_ICON")
-if not APP_ICON and sys.platform == "win32" and DEFAULT_ICON.is_file():
-    APP_ICON = str(DEFAULT_ICON)
 if APP_ICON:
     APP_ICON = str(Path(APP_ICON).expanduser().resolve())
     if not Path(APP_ICON).is_file():
         raise SystemExit(f"Application icon not found: {APP_ICON}")
+elif sys.platform == "win32" and DEFAULT_ICON.is_file():
+    APP_ICON = str(DEFAULT_ICON)
+
+if sys.platform == "darwin" and (
+    not APP_ICON or Path(APP_ICON).suffix.lower() != ".icns"
+):
+    raise SystemExit(
+        "macOS requires an .icns application icon. "
+        "Build through scripts/build_app.py so assets/torchdragon.ico "
+        "is converted automatically."
+    )
 
 app_datas = []
 if DEFAULT_ICON.is_file():
