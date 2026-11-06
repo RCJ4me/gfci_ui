@@ -25,8 +25,10 @@
 
 ### 3. FFT simulation and IIU
 
-* Plot the FFT diagram for IIU(V2). With input IIU passing criteria('Limit in IIU') shown as a red dotted line. 'TorchDragon' will label the over-limit current(RMS) and frequency.
-* Save Frequency/V2/Limit as '*.csv'
+* Plot RMS FFT diagrams for the raw input and IIU post-letgo output.
+* Apply the frequency-dependent IIU passing criteria to Raw FFT and label over-limit RMS values and frequencies. Post-letgo FFT is exported without threshold or pass/fail markings.
+* Save frequency, RMS amplitude, threshold, and result data as '*.csv'.
+* Display and export voltage data in `mV` and current data in `mA` throughout plots, CSV files, and reports.
 
 ### 4. Test Report
 

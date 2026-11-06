@@ -33,6 +33,7 @@ __version__ = "0.0.3.3"
 APP_NAME = "GFCI Analyzer"
 APP_USER_MODEL_ID = "GFCI.Analyzer"
 APP_ICON_RELATIVE_PATH = Path("assets") / "torchdragon.ico"
+DEFAULT_CSV_SAMPLE_INTERVAL = 3.2e-7
 
 # Analysis engine: prefer the copy bundled with this GUI, then the sibling repo.
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -100,10 +101,14 @@ def configure_windows_app_id():
         pass
 
 
-def read_csv_structure(file_path):
-    """Return the channel names and vertical units declared in a CSV."""
+def _read_csv_metadata(file_path):
+    """Return channel metadata and the data duration from a CSV header."""
     channels = []
     units = set()
+    sample_interval = DEFAULT_CSV_SAMPLE_INTERVAL
+    record_length = None
+    data_row_count = 0
+    header_found = False
     try:
         with open(
             file_path,
@@ -116,6 +121,10 @@ def read_csv_structure(file_path):
                 if not row:
                     continue
                 key = row[0].strip().casefold()
+                if header_found:
+                    if any(value.strip() for value in row):
+                        data_row_count += 1
+                    continue
                 if key == "time":
                     seen = set()
                     for value in row[1:]:
@@ -123,15 +132,57 @@ def read_csv_structure(file_path):
                         if name and name.casefold() not in seen:
                             seen.add(name.casefold())
                             channels.append(name)
-                    break
-                if key == "vertical units":
+                    header_found = True
+                    if (
+                        record_length is not None
+                        and record_length > 1
+                        and sample_interval > 0
+                    ):
+                        break
+                elif key == "vertical units":
                     for value in row[1:]:
                         unit = value.strip()
                         if unit and unit.casefold() != "vertical units":
                             units.add(unit.upper())
-    except (OSError, csv.Error):
-        return [], set()
+                elif key == "sample interval" and len(row) > 1:
+                    try:
+                        sample_interval = float(row[1].strip())
+                    except ValueError:
+                        pass
+                elif key == "record length" and len(row) > 1:
+                    try:
+                        record_length = int(float(row[1].strip()))
+                    except ValueError:
+                        pass
+    except (OSError, csv.Error, LookupError):
+        return [], set(), None
+
+    if not header_found:
+        return [], set(), None
+
+    if (
+        record_length is not None
+        and record_length > 1
+        and sample_interval > 0
+    ):
+        duration = (record_length - 1) * sample_interval
+    elif data_row_count > 0 and sample_interval > 0:
+        duration = (data_row_count - 1) * sample_interval
+    else:
+        duration = None
+    return channels, units, duration
+
+
+def read_csv_structure(file_path):
+    """Return the channel names and vertical units declared in a CSV."""
+    channels, units, _ = _read_csv_metadata(file_path)
     return channels, units
+
+
+def read_csv_duration(file_path):
+    """Return the zero-based data duration in seconds, when available."""
+    _, _, duration = _read_csv_metadata(file_path)
+    return duration
 
 
 def find_csv_channels(file_path):
@@ -553,9 +604,36 @@ class MainWindow(QMainWindow):
             )
             return
 
+        time_start = self.ui.spin_time_start.value()
+        time_end = self.ui.spin_time_end.value()
+        invalid_windows = []
+        for file_path in matching_files:
+            duration = read_csv_duration(file_path)
+            if duration is None:
+                continue
+            if time_start > duration or time_end > duration:
+                invalid_windows.append(
+                    f"{os.path.basename(file_path)}: "
+                    f"data duration {duration:.6f} s"
+                )
+        if invalid_windows:
+            QMessageBox.warning(
+                self,
+                "Time Window Out of Range",
+                (
+                    f"The selected time window "
+                    f"({time_start:.3f}-{time_end:.3f} s) exceeds the "
+                    "available data range (0.000000 s to the durations "
+                    "shown below).\n\n"
+                    + "\n".join(invalid_windows)
+                    + "\n\nAnalysis was not started."
+                ),
+            )
+            return
+
         params = {
-            "time_start": self.ui.spin_time_start.value(),
-            "time_end": self.ui.spin_time_end.value(),
+            "time_start": time_start,
+            "time_end": time_end,
             "fft_min": self.ui.spin_fft_min.value(),
             "fft_max": self.ui.spin_fft_max.value(),
             "channel": selected_channel.casefold(),
