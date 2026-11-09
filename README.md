@@ -33,6 +33,8 @@
 ### 4. Test Report
 
 * Generate test report summary, and list out time-domain RMS data for each waveform, if over the pass criteria software also list out chart for failed frequency and V2 result.
+* Add a green `PASS` conclusion when the post-letgo RMS is at or below the base over-limit threshold, otherwise add a red `FAIL` conclusion for both the full and selected time windows.
+* Preview report data without plots in the GUI. The exported A4 PDF keeps one test section and its plot per page, includes the same pass/fail conclusions, and removes the temporary Markdown source after a successful export.
 
 ### Demo Result
 

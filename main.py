@@ -20,7 +20,6 @@ import sys
 import traceback
 from pathlib import Path
 
-import markdown
 from PyQt6.QtCore import QStandardPaths, QThread, QTimer, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
@@ -29,7 +28,7 @@ from PyQt6.QtWidgets import (
 
 
 # Shown in the bottom-left corner of the window (see window.ui / lbl_version).
-__version__ = "0.0.3.4"
+__version__ = "0.0.3.5"
 APP_NAME = "GFCI Analyzer"
 APP_USER_MODEL_ID = "GFCI.Analyzer"
 APP_ICON_RELATIVE_PATH = Path("assets") / "torchdragon.ico"
@@ -55,6 +54,7 @@ for _path in reversed(_IMPORT_PATHS):
     sys.path.insert(0, _path)
 
 from window import Ui_MainWindow  # noqa: E402
+from report_export import export_markdown_to_pdf, render_report_html  # noqa: E402
 
 
 def resource_path(relative_path):
@@ -705,17 +705,55 @@ class MainWindow(QMainWindow):
             else:
                 combo.setCurrentIndex(target_index)
 
-        self._current_report_path = report_path or None
         report_file = Path(report_path) if report_path else None
-        can_open_export = bool(
-            report_file
-            and report_file.is_file()
-            and report_file.parent.is_dir()
+        self._current_report_path = report_path or None
+
+        if report_file is not None:
+            try:
+                pdf_path = export_markdown_to_pdf(report_file)
+            except Exception as exc:  # noqa: BLE001
+                message = (
+                    f"Could not export the PDF report for {base}. "
+                    "The Markdown report was kept."
+                )
+                self.log(f"!!! PDF export failed: {exc}")
+                self._show_export_warning(message, str(exc))
+            else:
+                self._current_report_path = str(pdf_path)
+                try:
+                    report_file.unlink()
+                except OSError as exc:
+                    self.log(
+                        f"!!! Could not remove temporary Markdown report: {exc}"
+                    )
+                    self._show_export_warning(
+                        f"PDF exported for {base}, but the Markdown file "
+                        "could not be removed.",
+                        str(exc),
+                    )
+                else:
+                    self.log(
+                        f"PDF exported: {pdf_path}; Markdown removed"
+                    )
+
+        current_report = (
+            Path(self._current_report_path)
+            if self._current_report_path
+            else None
         )
-        self.ui.btn_open_export_folder.setEnabled(can_open_export)
+        self.ui.btn_open_export_folder.setEnabled(
+            bool(
+                current_report
+                and current_report.is_file()
+                and current_report.parent.is_dir()
+            )
+        )
 
         if report_text:
-            self.show_report(report_text)
+            self.show_report(
+                report_text,
+                report_file.parent if report_file is not None else None,
+            )
 
     def open_export_folder(self):
         if not self._current_report_path:
@@ -749,26 +787,36 @@ class MainWindow(QMainWindow):
             8000,
         )
 
-    def show_report(self, report_text: str):
+    def show_report(
+        self,
+        report_text: str,
+        base_dir: str | Path | None = None,
+    ):
         """Render a Markdown report as an HTML preview."""
-        html = markdown.markdown(
+        document = self.ui.txt_report.document()
+        if base_dir is not None:
+            document.setBaseUrl(
+                QUrl.fromLocalFile(f"{Path(base_dir).resolve()}{os.sep}")
+            )
+        html_text = render_report_html(
             report_text,
-            extensions=["tables", "fenced_code"],
-            output_format="html5",
+            base_dir,
+            include_images=False,
+            include_page_breaks=False,
         )
-        styled_html = (
-            "<style>"
-            "body { font-family: 'Helvetica Neue', Arial, sans-serif; }"
-            "table { border-collapse: collapse; margin: 8px 0; }"
-            "th, td { border: 1px solid #bbb; padding: 4px 10px; }"
-            "th { background: #e8eef7; }"
-            "blockquote { color: #666; border-left: 3px solid #ccc; "
-            "margin-left: 0; padding-left: 12px; }"
-            "h1 { font-size: 20pt; } h2 { font-size: 15pt; } h3 { font-size: 12pt; }"
-            "</style>"
-            + html
-        )
-        self.ui.txt_report.setHtml(styled_html)
+        self.ui.txt_report.setHtml(html_text)
+
+    def _show_export_warning(self, message, detail):
+        """Display a PDF warning without interrupting the completed analysis."""
+        warning = QMessageBox(self)
+        warning.setIcon(QMessageBox.Icon.Warning)
+        warning.setWindowTitle("PDF Export")
+        warning.setText(message)
+        warning.setInformativeText(detail)
+        warning.setStandardButtons(QMessageBox.StandardButton.Ok)
+        warning.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        warning.setModal(False)
+        warning.show()
 
     def show_image(self, view, path):
         if not view.set_image(path):

@@ -16,7 +16,8 @@ raw_data
 /export/
 /.codex/
 
-/tests/
+/tests/*
+!/tests/test_*.py
 
 # Package
 PACKAGING.md
