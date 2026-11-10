@@ -51,7 +51,7 @@ uv sync --extra build
 uv run --extra build python scripts\build_app.py
 ```
 
-产物：`dist\GFCI Analyzer.exe`
+产物：`dist\TorchDragon.exe`
 
 指定分析引擎目录：
 
@@ -83,7 +83,7 @@ Windows 的 SmartScreen 会对**没有代码签名**或**从网络下载**的 `.
    匿名可执行文件。可用以下命令确认：
 
    ```powershell
-   (Get-Item 'dist\GFCI Analyzer.exe').VersionInfo | Format-List *
+   (Get-Item 'dist\TorchDragon.exe').VersionInfo | Format-List *
    ```
 
 2. **不使用 UPX 压缩**：`upx=False`，避免被启发式引擎误判为加壳恶意软件。
@@ -98,7 +98,7 @@ Windows 的 SmartScreen 会对**没有代码签名**或**从网络下载**的 `.
   打上 Mark-of-the-Web。在目标电脑上执行一次即可解除：
 
   ```powershell
-  Unblock-File -Path '.\GFCI Analyzer.exe'
+  Unblock-File -Path '.\TorchDragon.exe'
   ```
 
   或右键文件 → 属性 → 勾选“解除锁定” → 确定。
@@ -108,7 +108,7 @@ Windows 的 SmartScreen 会对**没有代码签名**或**从网络下载**的 `.
 
   ```powershell
   signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
-    /f mycert.pfx /p PASSWORD "dist\GFCI Analyzer.exe"
+    /f mycert.pfx /p PASSWORD "dist\TorchDragon.exe"
   ```
 
   EV 证书可立即获得 SmartScreen 信誉；OV 证书需要累积下载量后信誉才会提升。

@@ -17,7 +17,7 @@ ENGINE_ROOT = PROJECT_ROOT.parent / "gfci_analysis_refactored"
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(ENGINE_ROOT))
 
-from PyQt6.QtGui import QImage  # noqa: E402
+from PyQt6.QtGui import QIcon, QImage  # noqa: E402
 from PyQt6.QtPdf import QPdfDocument  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
@@ -210,6 +210,88 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
 
         window.close()
         self.assertIsNotNone(app)
+
+    def test_bundled_windows_icon_contains_taskbar_sizes(self):
+        app = QApplication.instance() or QApplication([])
+        icon = QIcon(str(PROJECT_ROOT / "assets" / "torchdragon.ico"))
+        sizes = {
+            (size.width(), size.height())
+            for size in icon.availableSizes()
+        }
+
+        self.assertFalse(icon.isNull())
+        self.assertLessEqual(
+            {(16, 16), (32, 32), (48, 48), (256, 256)},
+            sizes,
+        )
+        self.assertIsNotNone(app)
+
+    def test_windows_app_id_is_set_explicitly(self):
+        import ctypes
+
+        shell32 = mock.Mock()
+        set_app_id = shell32.SetCurrentProcessExplicitAppUserModelID
+        set_app_id.return_value = 0
+        with mock.patch.object(
+            main.sys,
+            "platform",
+            "win32",
+        ), mock.patch.object(
+            ctypes,
+            "WinDLL",
+            create=True,
+            return_value=shell32,
+        ):
+            configured = main.configure_windows_app_id()
+
+        self.assertTrue(configured)
+        set_app_id.assert_called_once_with(main.APP_USER_MODEL_ID)
+
+    def test_windows_native_taskbar_icon_uses_window_handle(self):
+        import ctypes
+
+        user32 = mock.Mock()
+        load_image = user32.LoadImageW
+        load_image.return_value = 1234
+        send_message = user32.SendMessageW
+        fake_window = mock.Mock()
+        fake_window.winId.return_value = 5678
+
+        with tempfile.TemporaryDirectory() as directory:
+            icon_path = Path(directory) / "app.ico"
+            icon_path.write_bytes(b"ico")
+            with mock.patch.object(
+                main.sys,
+                "platform",
+                "win32",
+            ), mock.patch.object(
+                ctypes,
+                "WinDLL",
+                create=True,
+                return_value=user32,
+            ):
+                applied = main.apply_windows_taskbar_icon(
+                    fake_window,
+                    icon_path,
+                )
+
+        self.assertTrue(applied)
+        load_image.assert_called_once_with(
+            None,
+            str(icon_path),
+            main.IMAGE_ICON,
+            0,
+            0,
+            main.LR_LOADFROMFILE | main.LR_DEFAULTSIZE,
+        )
+        self.assertEqual(
+            send_message.call_args_list,
+            [
+                mock.call(5678, main.WM_SETICON, main.ICON_SMALL, 1234),
+                mock.call(5678, main.WM_SETICON, main.ICON_BIG, 1234),
+            ],
+        )
+        self.assertEqual(fake_window._windows_taskbar_icon, 1234)
 
     def test_curve_gallery_accumulates_current_run_and_opens_report_folder(self):
         app = QApplication.instance() or QApplication([])

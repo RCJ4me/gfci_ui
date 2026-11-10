@@ -28,11 +28,17 @@ from PyQt6.QtWidgets import (
 
 
 # Shown in the bottom-left corner of the window (see window.ui / lbl_version).
-__version__ = "0.0.3.5"
+__version__ = "0.0.3.6"
 APP_NAME = "GFCI Analyzer"
 APP_USER_MODEL_ID = "GFCI.Analyzer"
 APP_ICON_RELATIVE_PATH = Path("assets") / "torchdragon.ico"
 DEFAULT_CSV_SAMPLE_INTERVAL = 3.2e-7
+WM_SETICON = 0x0080
+ICON_SMALL = 0
+ICON_BIG = 1
+IMAGE_ICON = 1
+LR_LOADFROMFILE = 0x0010
+LR_DEFAULTSIZE = 0x0040
 
 # Analysis engine: prefer the copy bundled with this GUI, then the sibling repo.
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -87,18 +93,91 @@ def configure_matplotlib_cache():
     os.environ.setdefault("MPLCONFIGDIR", str(cache_dir))
 
 
-def configure_windows_app_id():
+def configure_windows_app_id() -> bool:
     """Give the Windows taskbar a stable identity for the application icon."""
     if sys.platform != "win32":
-        return
+        return False
     try:
         import ctypes
 
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
-            APP_USER_MODEL_ID
+        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+        set_app_id = shell32.SetCurrentProcessExplicitAppUserModelID
+        set_app_id.argtypes = [ctypes.c_wchar_p]
+        set_app_id.restype = ctypes.c_long
+        return set_app_id(APP_USER_MODEL_ID) == 0
+    except Exception:  # Icon configuration is best-effort.
+        return False
+
+
+def apply_windows_taskbar_icon(
+    window,
+    icon_path: str | Path | None = None,
+) -> bool:
+    """Set both native window icons so Windows uses them in the taskbar."""
+    if sys.platform != "win32":
+        return False
+
+    source = (
+        Path(icon_path)
+        if icon_path is not None
+        else resource_path(APP_ICON_RELATIVE_PATH)
+    )
+    if not source.is_file():
+        return False
+
+    try:
+        import ctypes
+
+        hwnd = int(window.winId())
+        if not hwnd:
+            return False
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        load_image = user32.LoadImageW
+        load_image.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_uint,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        ]
+        load_image.restype = ctypes.c_void_p
+
+        icon_handle = load_image(
+            None,
+            str(source),
+            IMAGE_ICON,
+            0,
+            0,
+            LR_LOADFROMFILE | LR_DEFAULTSIZE,
         )
-    except (AttributeError, OSError):
-        pass
+        if not icon_handle:
+            icon_handle = load_image(
+                None,
+                str(source),
+                IMAGE_ICON,
+                32,
+                32,
+                LR_LOADFROMFILE,
+            )
+        if not icon_handle:
+            return False
+
+        send_message = user32.SendMessageW
+        send_message.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_size_t,
+            ctypes.c_ssize_t,
+        ]
+        send_message.restype = ctypes.c_ssize_t
+        send_message(hwnd, WM_SETICON, ICON_SMALL, icon_handle)
+        send_message(hwnd, WM_SETICON, ICON_BIG, icon_handle)
+        window._windows_taskbar_icon = icon_handle
+        return True
+    except Exception:  # Icon configuration must not block application startup.
+        return False
 
 
 def _read_csv_metadata(file_path):
@@ -840,6 +919,7 @@ def main():
     window = MainWindow()
     window.setWindowIcon(app_icon)
     window.show()
+    apply_windows_taskbar_icon(window)
     sys.exit(app.exec())
 
 
