@@ -28,7 +28,7 @@ from PyQt6.QtWidgets import (
 
 
 # Shown in the bottom-left corner of the window (see window.ui / lbl_version).
-__version__ = "0.0.3.6"
+__version__ = "0.0.3.7"
 APP_NAME = "GFCI Analyzer"
 APP_USER_MODEL_ID = "GFCI.Analyzer"
 APP_ICON_RELATIVE_PATH = Path("assets") / "torchdragon.ico"
@@ -60,7 +60,11 @@ for _path in reversed(_IMPORT_PATHS):
     sys.path.insert(0, _path)
 
 from window import Ui_MainWindow  # noqa: E402
-from report_export import export_markdown_to_pdf, render_report_html  # noqa: E402
+from report_export import (  # noqa: E402
+    export_markdown_to_pdf,
+    pdf_path_for_csv,
+    render_report_html,
+)
 
 
 def resource_path(relative_path):
@@ -789,7 +793,10 @@ class MainWindow(QMainWindow):
 
         if report_file is not None:
             try:
-                pdf_path = export_markdown_to_pdf(report_file)
+                pdf_path = export_markdown_to_pdf(
+                    report_file,
+                    pdf_path_for_csv(report_file, base),
+                )
             except Exception as exc:  # noqa: BLE001
                 message = (
                     f"Could not export the PDF report for {base}. "

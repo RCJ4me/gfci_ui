@@ -237,6 +237,18 @@ def pdf_path_for_markdown(markdown_path: str | Path) -> Path:
     return Path(markdown_path).with_suffix(".pdf")
 
 
+def pdf_path_for_csv(
+    markdown_path: str | Path,
+    csv_name: str | Path,
+) -> Path:
+    """Return the user-facing PDF path for an imported CSV report."""
+    source = Path(markdown_path)
+    csv_stem = Path(csv_name).stem
+    if not csv_stem:
+        raise ValueError(f"CSV name has no file stem: {csv_name}")
+    return source.with_name(f"TD GFCI Report {csv_stem}.pdf")
+
+
 def pdf_image_size_limits() -> tuple[int, int]:
     """Return safe image bounds inside the configured A4 content area."""
     page_size = QPageSize(QPageSize.PageSizeId.A4).size(

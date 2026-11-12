@@ -504,6 +504,13 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
                 report_export.pdf_path_for_markdown(markdown_path),
                 root / "Summary_Report_LCSD_GFCI.pdf",
             )
+            self.assertEqual(
+                report_export.pdf_path_for_csv(
+                    markdown_path,
+                    "Tek002.csv",
+                ),
+                root / "TD GFCI Report Tek002.pdf",
+            )
             self.assertEqual(pdf_path, root / "Summary_Report_LCSD_GFCI.pdf")
             self.assertEqual(pdf_path.parent, markdown_path.parent)
             self.assertEqual(pdf_path.stem, markdown_path.stem)
@@ -678,7 +685,9 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
 
             window.on_file_done(*callbacks[0])
             report_path = Path(callbacks[0][5])
-            pdf_path = report_path.with_suffix(".pdf")
+            pdf_path = report_path.with_name(
+                f"TD GFCI Report {source_path.stem}.pdf"
+            )
             expected_dir = output_dir / source_path.stem
 
             self.assertEqual(report_path.parent, expected_dir)
@@ -763,7 +772,7 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
                 main,
                 "export_markdown_to_pdf",
                 side_effect=OSError("disk full"),
-            ), mock.patch.object(
+            ) as export_pdf, mock.patch.object(
                 window,
                 "_show_export_warning",
             ) as show_warning:
@@ -777,6 +786,10 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
                     "# Test Report\n\nMarkdown remains.",
                 )
 
+            export_pdf.assert_called_once_with(
+                report_path,
+                root / "TD GFCI Report sample.pdf",
+            )
             show_warning.assert_called_once()
             self.assertTrue(report_path.is_file())
             self.assertEqual(window._current_report_path, str(report_path))
