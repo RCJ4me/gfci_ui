@@ -9,8 +9,8 @@ Dependencies:
     PyQt6, numpy, pandas, scipy, matplotlib, markdown
 
 The UI layout is designed in Qt Designer; the source file is window.ui.
-After layout changes, regenerate window_ui.py:
-    pyuic6 -o window_ui.py window.ui
+After layout changes, regenerate window.py:
+    pyuic6 -o window.py window.ui
 """
 
 import csv
@@ -23,16 +23,28 @@ from pathlib import Path
 from PyQt6.QtCore import QStandardPaths, QThread, QTimer, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QIcon
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QFileDialog, QMessageBox, QStyle,
+    QApplication,
+    QButtonGroup,
+    QFileDialog,
+    QMainWindow,
+    QMessageBox,
+    QStyle,
+    QVBoxLayout,
 )
 
 
 # Shown in the bottom-left corner of the window (see window.ui / lbl_version).
-__version__ = "0.0.3.7"
+__version__ = "0.0.5.3"
 APP_NAME = "GFCI Analyzer"
 APP_USER_MODEL_ID = "GFCI.Analyzer"
 APP_ICON_RELATIVE_PATH = Path("assets") / "torchdragon.ico"
 DEFAULT_CSV_SAMPLE_INTERVAL = 3.2e-7
+FULL_SCALE_ANALYSIS = "full_scale"
+CUSTOMIZE_SCALE_ANALYSIS = "customize_scale"
+ANALYSIS_MODE_LABELS = {
+    FULL_SCALE_ANALYSIS: "Full Scale Analysis",
+    CUSTOMIZE_SCALE_ANALYSIS: "Customize Scale Analysis",
+}
 WM_SETICON = 0x0080
 ICON_SMALL = 0
 ICON_BIG = 1
@@ -64,6 +76,16 @@ from report_export import (  # noqa: E402
     export_markdown_to_pdf,
     pdf_path_for_csv,
     render_report_html,
+)
+from plot_data import (  # noqa: E402
+    PlotDataWorker,
+    PlotSource,
+    build_plot_sources,
+)
+from preview_plot import (  # noqa: E402
+    InteractivePlotWidget,
+    PreviewPlotWidget,
+    PreviewSeries,
 )
 
 
@@ -238,10 +260,10 @@ def _read_csv_metadata(file_path):
                     except ValueError:
                         pass
     except (OSError, csv.Error, LookupError):
-        return [], set(), None
+        return [], set(), None, None
 
     if not header_found:
-        return [], set(), None
+        return [], set(), None, None
 
     if (
         record_length is not None
@@ -253,19 +275,25 @@ def _read_csv_metadata(file_path):
         duration = (data_row_count - 1) * sample_interval
     else:
         duration = None
-    return channels, units, duration
+    return channels, units, duration, sample_interval
 
 
 def read_csv_structure(file_path):
     """Return the channel names and vertical units declared in a CSV."""
-    channels, units, _ = _read_csv_metadata(file_path)
+    channels, units, _, _ = _read_csv_metadata(file_path)
     return channels, units
 
 
 def read_csv_duration(file_path):
     """Return the zero-based data duration in seconds, when available."""
-    _, _, duration = _read_csv_metadata(file_path)
+    _, _, duration, _ = _read_csv_metadata(file_path)
     return duration
+
+
+def read_csv_timing(file_path):
+    """Return the duration and header sample interval for preflight checks."""
+    _, _, duration, sample_interval = _read_csv_metadata(file_path)
+    return duration, sample_interval
 
 
 def find_csv_channels(file_path):
@@ -274,13 +302,102 @@ def find_csv_channels(file_path):
     return channels
 
 
+def validate_custom_time_range(
+    time_start: float,
+    time_end: float,
+) -> str | None:
+    """Return a user-facing error for an invalid Customize Scale range."""
+    if time_end <= time_start:
+        return (
+            "Customize Scale Analysis requires Time End to be greater "
+            "than Time Start."
+        )
+    return None
+
+
+class PreviewWorker(QThread):
+    """Load and prepare one raw channel without blocking the GUI."""
+
+    ready = pyqtSignal(object)
+    failed = pyqtSignal(str)
+
+    def __init__(
+        self,
+        file_path,
+        channel,
+        analysis_mode,
+        time_start,
+        time_end,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.file_path = str(file_path)
+        self.channel = str(channel)
+        self.analysis_mode = analysis_mode
+        self.time_start = float(time_start)
+        self.time_end = float(time_end)
+
+    def run(self):
+        try:
+            import numpy as np
+
+            from gfci_analysis.io.reader import parse_mso54_csv
+            from gfci_analysis.units import display_unit_and_scale
+
+            data = parse_mso54_csv(
+                self.file_path,
+                channels=(self.channel,),
+            )
+            channel_key = self.channel.casefold()
+            if channel_key not in data.channels:
+                raise ValueError(
+                    f"Channel {self.channel} is not present in {self.file_path}."
+                )
+
+            mask = np.ones(data.time_sec.shape, dtype=bool)
+            mode_label = ANALYSIS_MODE_LABELS[self.analysis_mode]
+            if self.analysis_mode == CUSTOMIZE_SCALE_ANALYSIS:
+                error = validate_custom_time_range(
+                    self.time_start,
+                    self.time_end,
+                )
+                if error:
+                    raise ValueError(error)
+                mask = (
+                    (data.time_sec >= self.time_start)
+                    & (data.time_sec <= self.time_end)
+                )
+                if int(np.count_nonzero(mask)) < 2:
+                    raise ValueError(
+                        "The selected Customize Scale range contains fewer "
+                        "than two samples."
+                    )
+
+            display_unit, scale = display_unit_and_scale(data.value_unit)
+            title = (
+                f"{Path(self.file_path).name} | {self.channel.upper()} | "
+                f"{mode_label}"
+            )
+            if self.analysis_mode == CUSTOMIZE_SCALE_ANALYSIS:
+                title += f" | {self.time_start:.3f}-{self.time_end:.3f} s"
+            series = PreviewSeries(
+                time_ms=data.time_sec[mask] * 1000.0,
+                amplitude=data.channels[channel_key][mask] * scale,
+                unit=display_unit,
+                title=title,
+            )
+            self.ready.emit(series)
+        except Exception as exc:  # noqa: BLE001
+            self.failed.emit(str(exc))
+
+
 class AnalysisWorker(QThread):
     """Background analysis thread to keep the GUI responsive."""
 
     progress = pyqtSignal(int)          # 0-100, overall across all files
     stage = pyqtSignal(str)             # current pipeline stage, for the status bar
     log = pyqtSignal(str)               # log line
-    file_done = pyqtSignal(str, str, str, str, str, str, str)
+    file_done = pyqtSignal(str, str, str, str, str, str, str, object)
     finished_ok = pyqtSignal(int, int, int)  # success, failure, skipped
 
     def __init__(self, file_paths, params, parent=None):
@@ -310,6 +427,10 @@ class AnalysisWorker(QThread):
             return
 
         analysis_cfg = AnalysisConfig(
+            analysis_mode=self.params.get(
+                "analysis_mode",
+                FULL_SCALE_ANALYSIS,
+            ),
             time_start=self.params["time_start"],
             time_end=self.params["time_end"],
             fft_min_frequency=self.params["fft_min"],
@@ -389,6 +510,18 @@ class AnalysisWorker(QThread):
                     software_version=__version__,
                     **run_kwargs,
                 )
+                plot_output_dir = (
+                    Path(result.time_plot_path).parent
+                    if result.time_plot_path
+                    else output_cfg.for_data_name(Path(file_path).stem).output_dir
+                )
+                plot_sources = build_plot_sources(
+                    data_name=Path(file_path).stem,
+                    channel=selected_channel,
+                    output_dir=plot_output_dir,
+                    time_start=self.params["time_start"],
+                    time_end=self.params["time_end"],
+                )
                 self.progress.emit(int((idx + 1) / total * 100))
                 self.file_done.emit(
                     base,
@@ -398,6 +531,7 @@ class AnalysisWorker(QThread):
                     result.fft_plot_path or "",
                     getattr(result, "report_path", None) or "",
                     result.report_text or "",
+                    plot_sources,
                 )
                 success_count += 1
             except Exception as exc:  # noqa: BLE001
@@ -421,8 +555,13 @@ class MainWindow(QMainWindow):
         self.ui.mainLayout.setStretch(1, 61)
 
         self.worker = None
+        self.preview_worker = None
+        self.plot_worker = None
+        self._preview_generation = 0
+        self._plot_request_generation = 0
+        self._pending_plot_source = None
         self._channel_user_selected = False
-        self._curve_images = []
+        self._plot_sources = []
         self._current_report_path = None
         self._progress_target = 0
         self._progress_ceiling = 0
@@ -436,14 +575,17 @@ class MainWindow(QMainWindow):
 
         self.ui.lbl_version.setText(f"Version {__version__}")
         self.ui.edit_output_dir.setText(default_output_directory())
-        self._connect_signals()
+        self._setup_analysis_modes()
         self._setup_plot_views()
+        self._setup_preview_view()
+        self._connect_signals()
 
     def _connect_signals(self):
         self.ui.btn_add_files.clicked.connect(self.add_files)
         self.ui.btn_remove_file.clicked.connect(self.remove_file)
         self.ui.btn_clear_files.clicked.connect(self.clear_files)
         self.ui.btn_browse_dir.clicked.connect(self.browse_output_dir)
+        self.ui.btn_preview.clicked.connect(self.preview_data)
         self.ui.btn_run.clicked.connect(self.run_analysis)
         self.ui.btn_open_export_folder.clicked.connect(
             self.open_export_folder
@@ -451,26 +593,188 @@ class MainWindow(QMainWindow):
         self.ui.combo_channel.currentTextChanged.connect(
             self._on_channel_changed
         )
+        self.ui.radio_full_scale.toggled.connect(
+            self._on_analysis_mode_toggled
+        )
+        self.ui.radio_customize_scale.toggled.connect(
+            self._on_analysis_mode_toggled
+        )
+        self.ui.list_files.currentRowChanged.connect(
+            lambda _row: self._invalidate_preview()
+        )
+        self.ui.spin_time_start.valueChanged.connect(
+            lambda _value: self._invalidate_preview()
+        )
+        self.ui.spin_time_end.valueChanged.connect(
+            lambda _value: self._invalidate_preview()
+        )
+
+    def _setup_analysis_modes(self):
+        self._analysis_mode_group = QButtonGroup(self)
+        self._analysis_mode_group.setExclusive(True)
+        self._analysis_mode_group.addButton(self.ui.radio_full_scale)
+        self._analysis_mode_group.addButton(self.ui.radio_customize_scale)
+        self.ui.radio_full_scale.setChecked(True)
+
+    def _setup_preview_view(self):
+        layout = QVBoxLayout(self.ui.preview_plot_host)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_plot = PreviewPlotWidget(self.ui.preview_plot_host)
+        layout.addWidget(self.preview_plot)
+
+    def _analysis_mode(self):
+        if self.ui.radio_customize_scale.isChecked():
+            return CUSTOMIZE_SCALE_ANALYSIS
+        return FULL_SCALE_ANALYSIS
+
+    def _on_analysis_mode_toggled(self, checked):
+        if checked:
+            self._invalidate_preview()
+
+    def _invalidate_preview(self):
+        self._preview_generation += 1
+        self.preview_plot.clear_series()
+
+    def _preview_file_path(self):
+        row = self.ui.list_files.currentRow()
+        if row < 0 and self.ui.list_files.count():
+            row = 0
+        if row < 0:
+            return None
+        item = self.ui.list_files.item(row)
+        return item.text() if item is not None else None
+
+    def preview_data(self):
+        if self.preview_worker is not None and self.preview_worker.isRunning():
+            return
+
+        file_path = self._preview_file_path()
+        if not file_path:
+            QMessageBox.warning(
+                self,
+                "Preview",
+                "Please add and select a CSV file first.",
+            )
+            return
+
+        channel = self.ui.combo_channel.currentText().strip()
+        if not channel:
+            QMessageBox.warning(
+                self,
+                "Preview",
+                "No analysis channel is available in the selected CSV file.",
+            )
+            return
+        channels, _ = read_csv_structure(file_path)
+        if channel.casefold() not in {name.casefold() for name in channels}:
+            QMessageBox.warning(
+                self,
+                "Preview",
+                f"Channel {channel} is not present in {os.path.basename(file_path)}.",
+            )
+            return
+
+        mode = self._analysis_mode()
+        time_start = self.ui.spin_time_start.value()
+        time_end = self.ui.spin_time_end.value()
+        if mode == CUSTOMIZE_SCALE_ANALYSIS:
+            error = validate_custom_time_range(time_start, time_end)
+            if error:
+                QMessageBox.warning(self, "Preview", error)
+                return
+
+        duration = read_csv_duration(file_path)
+        if (
+            mode == CUSTOMIZE_SCALE_ANALYSIS
+            and duration is not None
+            and (time_start > duration or time_end > duration)
+        ):
+            QMessageBox.warning(
+                self,
+                "Preview",
+                (
+                    f"The selected time range ({time_start:.3f}-"
+                    f"{time_end:.3f} s) exceeds the data duration "
+                    f"({duration:.6f} s)."
+                ),
+            )
+            return
+
+        self._preview_generation += 1
+        generation = self._preview_generation
+        self.ui.btn_preview.setEnabled(False)
+        self.statusBar().showMessage(
+            f"Preparing Preview for {os.path.basename(file_path)} ..."
+        )
+
+        worker = PreviewWorker(
+            file_path,
+            channel,
+            mode,
+            time_start,
+            time_end,
+            self,
+        )
+        worker.ready.connect(
+            lambda series, request=generation: self._on_preview_ready(
+                series,
+                request,
+            )
+        )
+        worker.failed.connect(
+            lambda message, request=generation: self._on_preview_failed(
+                message,
+                request,
+            )
+        )
+        worker.finished.connect(self._on_preview_finished)
+        self.preview_worker = worker
+        worker.start()
+
+    def _on_preview_ready(self, series, generation):
+        if generation != self._preview_generation:
+            return
+        self.preview_plot.set_series(series)
+        self.ui.tab_results.setCurrentWidget(self.ui.tab_preview)
+        self.statusBar().showMessage(
+            f"Preview ready: {series.point_count} samples",
+            5000,
+        )
+
+    def _on_preview_failed(self, message, generation):
+        if generation != self._preview_generation:
+            return
+        QMessageBox.warning(self, "Preview", message)
+
+    def _on_preview_finished(self):
+        worker = self.sender()
+        if worker is self.preview_worker:
+            self.preview_worker = None
+        self.ui.btn_preview.setEnabled(True)
+        if worker is not None:
+            worker.deleteLater()
 
     def _setup_plot_views(self):
-        """Wire the curve selector, zoom controls, and export-folder button."""
-        self.ui.view_curve.set_placeholder(
-            "No curve image generated in this run."
-        )
+        """Create the interactive Plot view and wire its controls."""
+        layout = QVBoxLayout(self.ui.plot_host)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.plot_view = InteractivePlotWidget(self.ui.plot_host)
+        self.plot_view.set_placeholder("No interactive plot available.")
+        layout.addWidget(self.plot_view)
         self.ui.combo_curve_image.setPlaceholderText(
-            "No exported images in this run"
+            "No analysis plots in this run"
         )
         self.ui.combo_curve_image.currentIndexChanged.connect(
-            self._on_curve_image_changed
+            self._on_plot_source_changed
         )
         self.ui.btn_zoom_in_curve.clicked.connect(
-            self.ui.view_curve.zoom_in
+            self.plot_view.zoom_in
         )
         self.ui.btn_zoom_out_curve.clicked.connect(
-            self.ui.view_curve.zoom_out
+            self.plot_view.zoom_out
         )
         self.ui.btn_fit_curve.clicked.connect(
-            self.ui.view_curve.fit_to_width
+            self.plot_view.fit_to_width
         )
         self.ui.btn_open_export_folder.setIcon(
             self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon)
@@ -478,20 +782,81 @@ class MainWindow(QMainWindow):
         self.ui.btn_open_export_folder.setEnabled(False)
 
     def _reset_curve_gallery(self):
-        """Discard images from the previous run before starting a new one."""
-        self._curve_images.clear()
+        """Discard Plot sources and data from the previous run."""
+        self._plot_request_generation += 1
+        self._pending_plot_source = None
+        self._plot_sources.clear()
         self.ui.combo_curve_image.clear()
-        self.ui.view_curve.clear_image()
+        self.plot_view.set_placeholder("No interactive plot available.")
+        self.plot_view.clear_plot()
 
-    def _on_curve_image_changed(self, index):
-        path = self.ui.combo_curve_image.itemData(index)
-        if not path:
+    def _on_plot_source_changed(self, index):
+        source = self.ui.combo_curve_image.itemData(index)
+        if not isinstance(source, PlotSource):
+            self.plot_view.set_placeholder("No interactive plot selected.")
+            self.plot_view.clear_plot()
             return
-        self.show_image(self.ui.view_curve, str(path))
+        self._request_plot_source(source)
+
+    def _request_plot_source(self, source):
+        self._plot_request_generation += 1
+        self._pending_plot_source = source
+        self.plot_view.set_placeholder(f"Loading {source.label} ...")
+        self.plot_view.clear_plot()
+        self._start_pending_plot_load()
+
+    def _start_pending_plot_load(self):
+        if self.plot_worker is not None and self.plot_worker.isRunning():
+            return
+        source = self._pending_plot_source
+        if source is None:
+            return
+        self._pending_plot_source = None
+        generation = self._plot_request_generation
+        worker = PlotDataWorker(source, self)
+        worker.ready.connect(
+            lambda data, request=generation: self._on_plot_data_ready(
+                data,
+                request,
+            )
+        )
+        worker.failed.connect(
+            lambda message, request=generation: self._on_plot_data_failed(
+                message,
+                request,
+            )
+        )
+        worker.finished.connect(self._on_plot_worker_finished)
+        self.plot_worker = worker
+        self.statusBar().showMessage(f"Loading Plot: {source.label} ...")
+        worker.start()
+
+    def _on_plot_data_ready(self, plot_data, generation):
+        if generation != self._plot_request_generation:
+            return
+        self.plot_view.set_plot_data(plot_data)
+        self.statusBar().showMessage(f"Plot ready: {plot_data.title}", 5000)
+
+    def _on_plot_data_failed(self, message, generation):
+        if generation != self._plot_request_generation:
+            return
+        self.plot_view.set_placeholder("Plot data could not be loaded.")
+        self.plot_view.clear_plot()
+        self.statusBar().showMessage("Plot data could not be loaded.", 5000)
+        QMessageBox.warning(self, "Plot", message)
+
+    def _on_plot_worker_finished(self):
+        worker = self.sender()
+        if worker is self.plot_worker:
+            self.plot_worker = None
+        if worker is not None:
+            worker.deleteLater()
+        self._start_pending_plot_load()
 
     def _on_channel_changed(self, _text):
         self._channel_user_selected = True
         self._update_threshold_label()
+        self._invalidate_preview()
 
     # ---------- Progress ----------
     # While a stage runs the bar is allowed to creep this far past the value
@@ -575,6 +940,7 @@ class MainWindow(QMainWindow):
         if not names:
             self._channel_user_selected = False
         self._update_threshold_label()
+        self._invalidate_preview()
 
     def _selected_value_unit(self):
         selected = self.ui.combo_channel.currentText().casefold()
@@ -627,6 +993,16 @@ class MainWindow(QMainWindow):
     def run_analysis(self):
         if self.worker is not None and self.worker.isRunning():
             QMessageBox.information(self, "Notice", "An analysis is already running. Please wait.")
+            return
+        if (
+            self.preview_worker is not None
+            and self.preview_worker.isRunning()
+        ):
+            QMessageBox.information(
+                self,
+                "Notice",
+                "Preview data is still loading. Please wait.",
+            )
             return
 
         files = [self.ui.list_files.item(i).text()
@@ -687,11 +1063,21 @@ class MainWindow(QMainWindow):
             )
             return
 
+        analysis_mode = self._analysis_mode()
         time_start = self.ui.spin_time_start.value()
         time_end = self.ui.spin_time_end.value()
+        if analysis_mode == CUSTOMIZE_SCALE_ANALYSIS:
+            error = validate_custom_time_range(time_start, time_end)
+            if error:
+                QMessageBox.warning(
+                    self,
+                    "Customize Scale Analysis",
+                    error,
+                )
+                return
         invalid_windows = []
         for file_path in matching_files:
-            duration = read_csv_duration(file_path)
+            duration, sample_interval = read_csv_timing(file_path)
             if duration is None:
                 continue
             if time_start > duration or time_end > duration:
@@ -699,15 +1085,45 @@ class MainWindow(QMainWindow):
                     f"{os.path.basename(file_path)}: "
                     f"data duration {duration:.6f} s"
                 )
+                continue
+            if (
+                analysis_mode == CUSTOMIZE_SCALE_ANALYSIS
+                and sample_interval is not None
+                and sample_interval > 0
+            ):
+                visible_end = min(time_end, duration)
+                sample_count = (
+                    int((visible_end - time_start) / sample_interval) + 1
+                )
+                if sample_count < 2:
+                    invalid_windows.append(
+                        f"{os.path.basename(file_path)}: selected range "
+                        "contains fewer than two samples"
+                    )
         if invalid_windows:
-            QMessageBox.warning(
-                self,
-                "Time Window Out of Range",
-                (
+            warning_title = (
+                "Customize Scale Analysis"
+                if analysis_mode == CUSTOMIZE_SCALE_ANALYSIS
+                else "Time Window Out of Range"
+            )
+            if analysis_mode == CUSTOMIZE_SCALE_ANALYSIS:
+                introduction = (
+                    f"The selected Customize Scale range "
+                    f"({time_start:.3f}-{time_end:.3f} s) cannot be "
+                    "analyzed.\n\n"
+                )
+            else:
+                introduction = (
                     f"The selected time window "
                     f"({time_start:.3f}-{time_end:.3f} s) exceeds the "
                     "available data range (0.000000 s to the durations "
                     "shown below).\n\n"
+                )
+            QMessageBox.warning(
+                self,
+                warning_title,
+                (
+                    introduction
                     + "\n".join(invalid_windows)
                     + "\n\nAnalysis was not started."
                 ),
@@ -715,6 +1131,7 @@ class MainWindow(QMainWindow):
             return
 
         params = {
+            "analysis_mode": analysis_mode,
             "time_start": time_start,
             "time_end": time_end,
             "fft_min": self.ui.spin_fft_min.value(),
@@ -728,6 +1145,7 @@ class MainWindow(QMainWindow):
         self.ui.txt_log.clear()
         self.ui.txt_report.clear()
         self._reset_curve_gallery()
+        self._invalidate_preview()
         self._current_report_path = None
         self.ui.btn_open_export_folder.setEnabled(False)
         self.set_progress(0)
@@ -752,41 +1170,25 @@ class MainWindow(QMainWindow):
         fft_png,
         report_path,
         report_text,
+        plot_sources=None,
     ):
         self.log(f"Finished: {base}")
 
-        new_images = [
-            path
-            for path in (
-                time_png,
-                time_window_png,
-                raw_fft_png,
-                fft_png,
-            )
-            if path and os.path.exists(path)
-        ]
+        plot_sources = list(plot_sources or [])
         combo = self.ui.combo_curve_image
-        post_letgo_index = -1
         combo.blockSignals(True)
         try:
-            for path in new_images:
-                self._curve_images.append(path)
-                combo.addItem(Path(path).name, path)
-                if path == fft_png:
-                    post_letgo_index = combo.count() - 1
+            for source in plot_sources:
+                self._plot_sources.append(source)
+                combo.addItem(source.label, source)
+            if combo.count():
+                combo.setCurrentIndex(combo.count() - 1)
         finally:
             combo.blockSignals(False)
 
         if combo.count():
-            target_index = (
-                post_letgo_index
-                if post_letgo_index >= 0
-                else combo.count() - 1
-            )
-            if combo.currentIndex() == target_index:
-                self._on_curve_image_changed(combo.currentIndex())
-            else:
-                combo.setCurrentIndex(target_index)
+            target_index = combo.count() - 1
+            self._on_plot_source_changed(target_index)
 
         report_file = Path(report_path) if report_path else None
         self._current_report_path = report_path or None
@@ -903,10 +1305,6 @@ class MainWindow(QMainWindow):
         warning.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         warning.setModal(False)
         warning.show()
-
-    def show_image(self, view, path):
-        if not view.set_image(path):
-            self.log(f"Could not load image: {path}")
 
     def log(self, message):
         self.ui.txt_log.appendPlainText(message)

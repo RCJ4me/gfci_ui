@@ -19,11 +19,19 @@ sys.path.insert(0, str(ENGINE_ROOT))
 
 from PyQt6.QtGui import QIcon, QImage  # noqa: E402
 from PyQt6.QtPdf import QPdfDocument  # noqa: E402
+from PyQt6.QtTest import QTest  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 import main  # noqa: E402
 import report_export  # noqa: E402
 from gfci_analysis.io.reader import parse_mso54_csv  # noqa: E402
+from plot_data import (  # noqa: E402
+    PLOT_KIND_CONTINUOUS,
+    PLOT_KIND_FFT_POST,
+    PLOT_KIND_FFT_RAW,
+    PLOT_KIND_WINDOW,
+    PlotSource,
+)
 
 
 MSO44_SINGLE_CHANNEL = """\
@@ -103,6 +111,73 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
         path = directory / "capture.csv"
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return path
+
+    def _wait_for_preview(self, window, app):
+        for _ in range(300):
+            app.processEvents()
+            if window.preview_worker is None:
+                return
+            QTest.qWait(10)
+        self.fail("Preview worker did not finish")
+
+    def _wait_for_plot(self, window, app):
+        for _ in range(300):
+            app.processEvents()
+            if window.plot_worker is None and window.plot_view.has_data():
+                return
+            QTest.qWait(10)
+        self.fail("Plot worker did not finish")
+
+    def _plot_sources(self, root: Path, prefix: str) -> list[PlotSource]:
+        continuous = root / f"continuous-{prefix}.csv"
+        continuous.write_text(
+            "time_sec,ch1 (mV)\n0.0,1.0\n0.1,2.0\n0.2,-1.0\n",
+            encoding="utf-8",
+        )
+        window = root / f"window-{prefix}.csv"
+        window.write_text(
+            "time_sec,raw (mV),post_letgo (mV)\n"
+            "0.0,1.0,0.5\n0.1,2.0,1.0\n",
+            encoding="utf-8",
+        )
+        raw_fft = root / f"raw-fft-{prefix}.csv"
+        raw_fft.write_text(
+            "Value Type,RMS\nValue Unit,mV\n\n"
+            "Frequency (Hz),FFT RMS Amplitude (mV),"
+            "Over-limit Threshold (mV RMS),Result\n"
+            "40,1.0,2.0,PASS\n60,3.0,2.5,FAIL\n"
+            "\n=== Summary ===\n",
+            encoding="utf-8",
+        )
+        post_fft = root / f"post-fft-{prefix}.csv"
+        post_fft.write_text(
+            "Value Type,RMS\nValue Unit,mV\n\n"
+            "Frequency (Hz),FFT RMS Amplitude (mV)\n"
+            "40,1.0\n60,2.0\n\n=== Summary ===\n",
+            encoding="utf-8",
+        )
+        return [
+            PlotSource(
+                f"Continuous {prefix}",
+                PLOT_KIND_CONTINUOUS,
+                str(continuous),
+            ),
+            PlotSource(
+                f"Window {prefix}",
+                PLOT_KIND_WINDOW,
+                str(window),
+            ),
+            PlotSource(
+                f"Raw FFT {prefix}",
+                PLOT_KIND_FFT_RAW,
+                str(raw_fft),
+            ),
+            PlotSource(
+                f"Post FFT {prefix}",
+                PLOT_KIND_FFT_POST,
+                str(post_fft),
+            ),
+        ]
 
     def test_mso44_ch4_thumbnail_uses_full_metadata_duration(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -187,7 +262,113 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
             window.close()
         self.assertIsNotNone(app)
 
-    def test_main_layout_uses_39_61_ratio_and_three_result_tabs(self):
+    def test_preview_worker_filters_full_and_customize_ranges(self):
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write_waveform_csv(Path(directory))
+
+            full_series = []
+            full_worker = main.PreviewWorker(
+                path,
+                "ch1",
+                main.FULL_SCALE_ANALYSIS,
+                0.2,
+                0.4,
+            )
+            full_worker.ready.connect(full_series.append)
+            full_worker.run()
+
+            custom_series = []
+            custom_worker = main.PreviewWorker(
+                path,
+                "ch1",
+                main.CUSTOMIZE_SCALE_ANALYSIS,
+                0.2,
+                0.4,
+            )
+            custom_worker.ready.connect(custom_series.append)
+            custom_worker.run()
+
+            failures = []
+            empty_worker = main.PreviewWorker(
+                path,
+                "ch1",
+                main.CUSTOMIZE_SCALE_ANALYSIS,
+                0.2001,
+                0.2002,
+            )
+            empty_worker.failed.connect(failures.append)
+            empty_worker.run()
+
+        self.assertEqual(len(full_series), 1)
+        self.assertEqual(len(custom_series), 1)
+        full = full_series[0]
+        custom = custom_series[0]
+        self.assertEqual(full.point_count, 512)
+        self.assertEqual(custom.point_count, 201)
+        self.assertAlmostEqual(float(full.time_ms[0]), 0.0)
+        self.assertAlmostEqual(float(full.time_ms[-1]), 511.0)
+        self.assertAlmostEqual(float(custom.time_ms[0]), 200.0)
+        self.assertAlmostEqual(float(custom.time_ms[-1]), 400.0)
+        self.assertEqual(full.unit, "mV")
+        self.assertIn("Full Scale Analysis", full.title)
+        self.assertIn("Customize Scale Analysis", custom.title)
+        self.assertEqual(len(failures), 1)
+        self.assertIn("fewer than two samples", failures[0])
+        self.assertIsNotNone(app)
+
+    def test_preview_button_loads_customize_range_and_clears_stale_data(self):
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write_waveform_csv(Path(directory))
+            window = main.MainWindow()
+            window.ui.list_files.addItem(str(path))
+            window.ui.list_files.setCurrentRow(0)
+            window._refresh_channels()
+            window.ui.combo_channel.setCurrentText("CH1")
+            window.ui.radio_customize_scale.setChecked(True)
+            window.ui.spin_time_start.setValue(0.2)
+            window.ui.spin_time_end.setValue(0.4)
+
+            window.preview_data()
+            self._wait_for_preview(window, app)
+
+            self.assertIs(
+                window.ui.tab_results.currentWidget(),
+                window.ui.tab_preview,
+            )
+            self.assertTrue(window.preview_plot.has_data())
+            self.assertEqual(window.preview_plot.series.point_count, 201)
+            self.assertAlmostEqual(
+                float(window.preview_plot.series.time_ms[0]),
+                200.0,
+            )
+            self.assertAlmostEqual(
+                float(window.preview_plot.series.time_ms[-1]),
+                400.0,
+            )
+
+            window.ui.radio_full_scale.setChecked(True)
+            self.assertFalse(window.preview_plot.has_data())
+            window.ui.radio_customize_scale.setChecked(True)
+            window.ui.spin_time_start.setValue(0.2)
+            window.ui.spin_time_end.setValue(0.4)
+            window.preview_data()
+            self._wait_for_preview(window, app)
+
+            window.ui.spin_time_start.setValue(0.1)
+            self.assertFalse(window.preview_plot.has_data())
+
+            window.ui.spin_time_start.setValue(0.4)
+            window.ui.spin_time_end.setValue(0.2)
+            with mock.patch.object(main.QMessageBox, "warning") as warning:
+                window.preview_data()
+            warning.assert_called_once()
+            self.assertIsNone(window.preview_worker)
+            window.close()
+        self.assertIsNotNone(app)
+
+    def test_main_layout_uses_39_61_ratio_and_four_result_tabs(self):
         app = QApplication.instance() or QApplication([])
         window = main.MainWindow()
         window.resize(936, 757)
@@ -198,7 +379,20 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
             window.ui.tab_results.tabText(index)
             for index in range(window.ui.tab_results.count())
         ]
-        self.assertEqual(labels, ["Curve Plot", "Test Report", "Log"])
+        self.assertEqual(
+            labels,
+            ["Preview", "Plot", "Report", "Log"],
+        )
+        self.assertEqual(window.ui.tab_results.currentIndex(), 0)
+        self.assertTrue(window.ui.radio_full_scale.isChecked())
+        self.assertFalse(window.ui.radio_customize_scale.isChecked())
+        window.ui.radio_customize_scale.setChecked(True)
+        self.assertFalse(window.ui.radio_full_scale.isChecked())
+        self.assertTrue(window.ui.radio_customize_scale.isChecked())
+        window.ui.radio_full_scale.setChecked(True)
+        self.assertTrue(window.ui.btn_preview.isEnabled())
+        self.assertIsInstance(window.preview_plot, main.PreviewPlotWidget)
+        self.assertIsInstance(window.plot_view, main.InteractivePlotWidget)
         self.assertEqual(window.ui.mainLayout.stretch(0), 39)
         self.assertEqual(window.ui.mainLayout.stretch(1), 61)
         self.assertEqual(window.ui.groupBox_input.minimumWidth(), 320)
@@ -293,71 +487,71 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
         )
         self.assertEqual(fake_window._windows_taskbar_icon, 1234)
 
-    def test_curve_gallery_accumulates_current_run_and_opens_report_folder(self):
+    def test_interactive_plot_gallery_accumulates_files_and_opens_folder(self):
         app = QApplication.instance() or QApplication([])
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             window = main.MainWindow()
             self.assertFalse(window.ui.btn_open_export_folder.isEnabled())
-            self.assertEqual(window.ui.tab_results.tabText(0), "Curve Plot")
-            self.assertEqual(window.ui.tab_results.tabText(1), "Test Report")
-            self.assertEqual(window.ui.tab_results.tabText(2), "Log")
+            self.assertEqual(window.ui.tab_results.tabText(0), "Preview")
+            self.assertEqual(window.ui.tab_results.tabText(1), "Plot")
+            self.assertEqual(window.ui.tab_results.tabText(2), "Report")
+            self.assertEqual(window.ui.tab_results.tabText(3), "Log")
 
-            first_images = [
-                self._write_image(root, name)
-                for name in (
-                    "Continuous Plot first.png",
-                    "CH3_Plot_first_3.000s_3.032s.png",
-                    "FFT Raw RMS Signal first.png",
-                    "FFT Post Letgo RMS Signal first.png",
-                )
-            ]
+            first_sources = self._plot_sources(root, "first")
             first_report = root / "first" / "Summary_Report.md"
             first_report.parent.mkdir()
             first_report.write_text("# First report", encoding="utf-8")
 
             window.on_file_done(
                 "first.csv",
-                *(str(path) for path in first_images),
+                "",
+                "",
+                "",
+                "",
                 str(first_report),
                 "# First report",
+                first_sources,
             )
+            self._wait_for_plot(window, app)
 
             combo = window.ui.combo_curve_image
             self.assertEqual(combo.count(), 4)
             self.assertEqual(
                 [combo.itemText(index) for index in range(combo.count())],
-                [path.name for path in first_images],
+                [source.label for source in first_sources],
             )
             self.assertEqual(combo.currentIndex(), 3)
-            self.assertEqual(combo.currentData(), str(first_images[3]))
+            self.assertEqual(combo.currentData(), first_sources[3])
+            self.assertEqual(window.plot_view.plot_data.title, "Post FFT first")
+            self.assertEqual(window.plot_view.plot_data.criteria_series, [])
             self.assertTrue(window.ui.btn_open_export_folder.isEnabled())
 
-            second_images = [
-                self._write_image(root, name.replace("first", "second"))
-                for name in (
-                    "Continuous Plot first.png",
-                    "CH3_Plot_first_3.000s_3.032s.png",
-                    "FFT Raw RMS Signal first.png",
-                    "FFT Post Letgo RMS Signal first.png",
-                )
-            ]
+            second_sources = self._plot_sources(root, "second")
             second_report = root / "second" / "Summary_Report.md"
             second_report.parent.mkdir()
             second_report.write_text("# Second report", encoding="utf-8")
 
             window.on_file_done(
                 "second.csv",
-                *(str(path) for path in second_images),
+                "",
+                "",
+                "",
+                "",
                 str(second_report),
                 "# Second report",
+                second_sources,
             )
+            self._wait_for_plot(window, app)
 
             self.assertEqual(combo.count(), 8)
             self.assertEqual(combo.currentIndex(), 7)
-            self.assertEqual(combo.currentData(), str(second_images[3]))
+            self.assertEqual(combo.currentData(), second_sources[3])
             combo.setCurrentIndex(0)
-            self.assertEqual(combo.currentData(), str(first_images[0]))
+            self._wait_for_plot(window, app)
+            self.assertEqual(combo.currentData(), first_sources[0])
+            self.assertEqual(window.plot_view.plot_data.title, "Continuous first")
+            self.assertTrue(window.plot_view.plot_data.symmetric_y)
 
             with mock.patch.object(
                 main.QDesktopServices,
@@ -373,12 +567,10 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
 
             window._reset_curve_gallery()
             self.assertEqual(combo.count(), 0)
-            self.assertEqual(window._curve_images, [])
+            self.assertEqual(window._plot_sources, [])
+            self.assertFalse(window.plot_view.has_data())
 
-            single_image = self._write_image(
-                root,
-                "FFT Post Letgo RMS Signal single.png",
-            )
+            single_sources = self._plot_sources(root, "single")
             single_report = root / "single" / "Summary_Report.md"
             single_report.parent.mkdir()
             single_report.write_text("# Single report", encoding="utf-8")
@@ -387,13 +579,15 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
                 "",
                 "",
                 "",
-                str(single_image),
+                "",
                 str(single_report),
                 "# Single report",
+                single_sources,
             )
-            self.assertEqual(combo.count(), 1)
-            self.assertEqual(combo.currentIndex(), 0)
-            self.assertIsNotNone(window.ui.view_curve._pixmap)
+            self._wait_for_plot(window, app)
+            self.assertEqual(combo.count(), 4)
+            self.assertEqual(combo.currentIndex(), 3)
+            self.assertTrue(window.plot_view.has_data())
             window.close()
         self.assertIsNotNone(app)
 
@@ -482,6 +676,46 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
             self.assertIn("first.csv: data duration 0.400000 s", message)
             self.assertIn("second.csv: data duration 0.400000 s", message)
             self.assertIn("Analysis was not started.", message)
+            self.assertIsNone(window.worker)
+            window.close()
+        self.assertIsNotNone(app)
+
+    def test_run_analysis_blocks_reversed_customize_range(self):
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write_csv(directory, MSO54_THREE_CHANNELS)
+            window = main.MainWindow()
+            window.ui.list_files.addItem(str(path))
+            window._refresh_channels()
+            window.ui.radio_customize_scale.setChecked(True)
+            window.ui.spin_time_start.setValue(0.3)
+            window.ui.spin_time_end.setValue(0.2)
+
+            with mock.patch.object(main.QMessageBox, "warning") as warning:
+                window.run_analysis()
+
+            warning.assert_called_once()
+            self.assertIsNone(window.worker)
+            window.close()
+        self.assertIsNotNone(app)
+
+    def test_run_analysis_blocks_customize_range_without_two_samples(self):
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._write_csv(directory, MSO54_THREE_CHANNELS)
+            window = main.MainWindow()
+            window.ui.list_files.addItem(str(path))
+            window._refresh_channels()
+            window.ui.radio_customize_scale.setChecked(True)
+            window.ui.spin_time_start.setValue(0.0)
+            window.ui.spin_time_end.setValue(0.001)
+
+            with mock.patch.object(main.QMessageBox, "warning") as warning:
+                window.run_analysis()
+
+            warning.assert_called_once()
+            message = warning.call_args.args[2]
+            self.assertIn("fewer than two samples", message)
             self.assertIsNone(window.worker)
             window.close()
         self.assertIsNotNone(app)
@@ -659,6 +893,7 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
             worker = main.AnalysisWorker(
                 [str(source_path)],
                 {
+                    "analysis_mode": main.FULL_SCALE_ANALYSIS,
                     "time_start": 0.2,
                     "time_end": 0.4,
                     "fft_min": 40,
@@ -684,6 +919,13 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
             self.assertEqual(len(callbacks), 1)
 
             window.on_file_done(*callbacks[0])
+            self.assertEqual(len(callbacks[0][7]), 4)
+            self._wait_for_plot(window, app)
+            self.assertEqual(window.ui.combo_curve_image.count(), 4)
+            self.assertEqual(
+                window.plot_view.plot_data.title,
+                "FFT Post-letgo capture",
+            )
             report_path = Path(callbacks[0][5])
             pdf_path = report_path.with_name(
                 f"TD GFCI Report {source_path.stem}.pdf"
@@ -736,13 +978,17 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
                 "Test conclusion:",
                 window.ui.txt_report.toPlainText(),
             )
+            self.assertIn(
+                "Analysis mode: Full Scale Analysis",
+                window.ui.txt_report.toPlainText(),
+            )
             self.assertNotIn("<img", window.ui.txt_report.toHtml().lower())
             self.assertNotIn(
                 "pdf-page-break",
                 window.ui.txt_report.toHtml(),
             )
             self.assertTrue(window.ui.btn_open_export_folder.isEnabled())
-            self.assertEqual(window.ui.tab_results.tabText(1), "Test Report")
+            self.assertEqual(window.ui.tab_results.tabText(2), "Report")
 
             with mock.patch.object(
                 main.QDesktopServices,
@@ -753,6 +999,68 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
             self.assertEqual(
                 Path(open_url.call_args.args[0].toLocalFile()),
                 expected_dir.resolve(),
+            )
+            window.close()
+        self.assertIsNotNone(app)
+
+    def test_customize_worker_exports_three_page_scoped_report(self):
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_path = self._write_waveform_csv(root)
+            output_dir = root / "export"
+            window = main.MainWindow()
+            worker = main.AnalysisWorker(
+                [str(source_path)],
+                {
+                    "analysis_mode": main.CUSTOMIZE_SCALE_ANALYSIS,
+                    "time_start": 0.2,
+                    "time_end": 0.4,
+                    "fft_min": 40,
+                    "fft_max": 250,
+                    "channel": "ch1",
+                    "overlimit": 3.5,
+                    "picture_format": 0,
+                    "output_dir": str(output_dir),
+                },
+                window,
+            )
+            callbacks = []
+            worker.file_done.connect(lambda *args: callbacks.append(args))
+            worker.run()
+            self.assertEqual(len(callbacks), 1)
+
+            window.on_file_done(*callbacks[0])
+            self._wait_for_plot(window, app)
+            self.assertEqual(window.ui.combo_curve_image.count(), 4)
+            markdown_path = Path(callbacks[0][5])
+            pdf_path = markdown_path.with_name(
+                f"TD GFCI Report {source_path.stem}.pdf"
+            )
+            self.assertFalse(markdown_path.exists())
+            self.assertTrue(pdf_path.is_file())
+
+            document = QPdfDocument(None)
+            document.load(str(pdf_path))
+            self.assertEqual(document.pageCount(), 3)
+            page_texts = [
+                document.getAllText(index).text()
+                for index in range(document.pageCount())
+            ]
+            document.close()
+
+            self.assertIn("Analysis mode: Customize Scale Analysis", page_texts[0])
+            self.assertIn("Analysis time range: 0.200 s - 0.400 s", page_texts[0])
+            self.assertIn("Customize Scale Time Window Statistics", page_texts[0])
+            self.assertNotIn("Full Time Window Statistics", page_texts[0])
+            self.assertIn("FFT RMS Value Analysis (CH1 raw)", page_texts[1])
+            self.assertIn(
+                "FFT RMS Value Analysis (CH1 post-letgo)",
+                page_texts[2],
+            )
+            self.assertIn(
+                "Customize Scale Analysis",
+                window.ui.txt_report.toPlainText(),
             )
             window.close()
         self.assertIsNotNone(app)

@@ -17,6 +17,9 @@
 
 * Plot the raw data(V1) with multiple channels as a time-current diagram, labeled with the 'MIN/MEAM/MAX/RMS' values in a picture.
 * Translate the raw data from the oscilloscope into time-domain data, and save as 'CSV'
+* Use the Preview tab to inspect the current CSV and channel as an interactive raw waveform. Hovering reports absolute time and amplitude on separate X/Y lines; the wheel zooms, dragging pans, and double-clicking resets the view.
+* Choose `Full Scale Analysis` for the existing whole-record workflow, or `Customize Scale Analysis` to apply statistics, plots, CSV exports, and both FFT analyses only to the selected time range.
+* The Plot tab provides interactive time-domain and FFT plots loaded from the exported analysis CSV files. Time-domain plots use a zero-centered symmetric Y axis; FFT plots retain their logarithmic frequency axis. Pass Criteria remain visible but do not participate in hover selection.
 
 ### 2. Let-go network simulation
 
@@ -33,6 +36,7 @@
 ### 4. Test Report
 
 * Generate test report summary, and list out time-domain RMS data for each waveform, if over the pass criteria software also list out chart for failed frequency and V2 result.
+* Record whether the report uses `Full Scale Analysis` or `Customize Scale Analysis`. Customize Scale reports include the exact analysis time range.
 * Add a green `PASS` conclusion when the post-letgo RMS is at or below the base over-limit threshold, otherwise add a red `FAIL` conclusion for both the full and selected time windows.
 * Preview report data without plots in the GUI. The exported A4 PDF is named `TD GFCI Report <CSV name>.pdf`, keeps one test section and its plot per page, includes the same pass/fail conclusions, and removes the temporary Markdown source after a successful export.
 
