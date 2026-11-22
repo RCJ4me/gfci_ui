@@ -20,6 +20,7 @@
 * Use the Preview tab to inspect the current CSV and channel as an interactive raw waveform. Hovering reports absolute time and amplitude on separate X/Y lines; the wheel zooms, dragging pans, and double-clicking resets the view.
 * Choose `Full Scale Analysis` for the existing whole-record workflow, or `Customize Scale Analysis` to apply statistics, plots, CSV exports, and both FFT analyses only to the selected time range.
 * The Plot tab provides interactive time-domain and FFT plots loaded from the exported analysis CSV files. Time-domain plots use a zero-centered symmetric Y axis; FFT plots retain their logarithmic frequency axis. Pass Criteria remain visible but do not participate in hover selection.
+* Windows builds use a directory distribution for faster startup. Memory usage is recorded in the Log at startup, per-file completion, Plot loading, and release points.
 
 ### 2. Let-go network simulation
 

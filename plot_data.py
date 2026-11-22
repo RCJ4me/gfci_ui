@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import csv
+import gc
 import re
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 from PyQt6.QtCore import QThread, pyqtSignal
 
 from preview_plot import InteractivePlotData, PlotSeries
@@ -84,10 +84,12 @@ def _series_name(header: str) -> str:
 
 
 def _load_time_csv(source: PlotSource) -> InteractivePlotData:
+    import pandas as pd
+
     frame = pd.read_csv(source.csv_path)
     if "time_sec" not in frame:
         raise ValueError(f"Missing time_sec column in {source.csv_path}")
-    time_ms = frame["time_sec"].to_numpy(dtype=float) * 1000.0
+    time_ms = frame["time_sec"].to_numpy(dtype=float, copy=True) * 1000.0
     series: list[PlotSeries] = []
     unit = ""
     for index, header in enumerate(
@@ -103,7 +105,7 @@ def _load_time_csv(source: PlotSource) -> InteractivePlotData:
             PlotSeries(
                 name=name,
                 x=time_ms,
-                y=frame[header].to_numpy(dtype=float),
+                y=frame[header].to_numpy(dtype=float, copy=True),
                 unit=unit,
                 color=SERIES_COLORS[index % len(SERIES_COLORS)],
                 interactive=True,
@@ -111,7 +113,7 @@ def _load_time_csv(source: PlotSource) -> InteractivePlotData:
         )
     if not series:
         raise ValueError(f"No data series found in {source.csv_path}")
-    return InteractivePlotData(
+    result = InteractivePlotData(
         title=source.label,
         x_label="Time (ms)",
         y_label=f"Amplitude ({unit})",
@@ -120,50 +122,52 @@ def _load_time_csv(source: PlotSource) -> InteractivePlotData:
         primary_series=series,
         criteria_series=[],
     )
+    del frame
+    return result
 
 
 def _load_fft_csv(source: PlotSource) -> InteractivePlotData:
+    data_started = False
+    header = None
+    frequencies: list[float] = []
+    amplitudes: list[float] = []
+    thresholds: list[float] = []
     with open(source.csv_path, "r", encoding="utf-8", newline="") as handle:
-        rows = list(csv.reader(handle))
-
-    header_index = next(
-        (
-            index
-            for index, row in enumerate(rows)
-            if row and row[0].strip().lower() == "frequency (hz)"
-        ),
-        None,
-    )
-    if header_index is None:
+        for row in csv.reader(handle):
+            if header is None:
+                if row and row[0].strip().lower() == "frequency (hz)":
+                    header = row
+                continue
+            if not data_started:
+                data_started = True
+            if not row or not row[0].strip():
+                break
+            frequencies.append(float(row[0]))
+            amplitudes.append(float(row[1]))
+            thresholds.append(
+                float(row[2]) if len(row) > 2 else float("nan")
+            )
+    if header is None:
         raise ValueError(f"Missing FFT spectrum table in {source.csv_path}")
-
-    header = rows[header_index]
-    data_rows = []
-    for row in rows[header_index + 1 :]:
-        if not row or not row[0].strip():
-            break
-        data_rows.append(row)
-    if not data_rows:
+    if not frequencies:
         raise ValueError(f"Empty FFT spectrum table in {source.csv_path}")
 
-    frequencies = np.asarray(
-        [float(row[0]) for row in data_rows],
-        dtype=float,
+    frequency_values = np.asarray(frequencies, dtype=float)
+    amplitude_values = np.asarray(amplitudes, dtype=float)
+    valid = (
+        (frequency_values > 0)
+        & np.isfinite(frequency_values)
+        & np.isfinite(amplitude_values)
     )
-    amplitudes = np.asarray(
-        [float(row[1]) for row in data_rows],
-        dtype=float,
-    )
-    valid = (frequencies > 0) & np.isfinite(frequencies) & np.isfinite(amplitudes)
-    frequencies = frequencies[valid]
-    amplitudes = amplitudes[valid]
+    frequency_values = frequency_values[valid]
+    amplitude_values = amplitude_values[valid]
     unit = _display_unit(header[1])
 
     primary = [
         PlotSeries(
             name=f"{source.label} Spectrum",
-            x=frequencies,
-            y=amplitudes,
+            x=frequency_values,
+            y=amplitude_values,
             unit=unit,
             color="#4f46e5",
             interactive=True,
@@ -179,16 +183,13 @@ def _load_fft_csv(source: PlotSource) -> InteractivePlotData:
         None,
     )
     if threshold_column is not None and len(header) > threshold_column:
-        thresholds = np.asarray(
-            [float(row[threshold_column]) for row in data_rows],
-            dtype=float,
-        )
-        threshold_valid = valid & np.isfinite(thresholds)
+        threshold_values = np.asarray(thresholds, dtype=float)
+        threshold_valid = valid & np.isfinite(threshold_values)
         criteria.append(
             PlotSeries(
                 name="Pass Criteria",
-                x=frequencies[threshold_valid],
-                y=thresholds[threshold_valid],
+                x=frequency_values[threshold_valid],
+                y=threshold_values[threshold_valid],
                 unit=unit,
                 color="#dc2626",
                 interactive=False,
@@ -229,6 +230,10 @@ class PlotDataWorker(QThread):
 
     def run(self):
         try:
-            self.ready.emit(load_plot_source(self.source))
+            plot_data = load_plot_source(self.source)
+            self.ready.emit(plot_data)
+            del plot_data
         except Exception as exc:  # noqa: BLE001
             self.failed.emit(str(exc))
+        finally:
+            gc.collect()

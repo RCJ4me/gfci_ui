@@ -44,14 +44,19 @@ uv run --extra build python scripts/build_app.py \
 .\build_windows.bat
 ```
 
-也可以直接执行：
+Windows 使用目录模式发布，以提高启动速度。也可以直接执行：
 
 ```powershell
 uv sync --extra build
 uv run --extra build python scripts\build_app.py
 ```
 
-产物：`dist\TorchDragon.exe`
+产物目录：`dist\TorchDragon\`
+
+启动文件：`dist\TorchDragon\TorchDragon.exe`
+
+发布时请压缩并分发整个 `TorchDragon` 目录，不要只复制 exe。桌面快捷方式应指向
+目录内的 `TorchDragon.exe`。
 
 指定分析引擎目录：
 
@@ -83,12 +88,12 @@ Windows 的 SmartScreen 会对**没有代码签名**或**从网络下载**的 `.
    匿名可执行文件。可用以下命令确认：
 
    ```powershell
-   (Get-Item 'dist\TorchDragon.exe').VersionInfo | Format-List *
+   (Get-Item 'dist\TorchDragon\TorchDragon.exe').VersionInfo | Format-List *
    ```
 
 2. **不使用 UPX 压缩**：`upx=False`，避免被启发式引擎误判为加壳恶意软件。
 
-3. **单文件、无控制台**：`console=False`，双击即可运行。
+3. **目录模式、无控制台**：`console=False`，启动目录内的 exe 即可运行。
 
 ### 如果仍然出现警告
 
@@ -98,7 +103,7 @@ Windows 的 SmartScreen 会对**没有代码签名**或**从网络下载**的 `.
   打上 Mark-of-the-Web。在目标电脑上执行一次即可解除：
 
   ```powershell
-  Unblock-File -Path '.\TorchDragon.exe'
+  Unblock-File -Path '.\TorchDragon\TorchDragon.exe'
   ```
 
   或右键文件 → 属性 → 勾选“解除锁定” → 确定。
@@ -108,7 +113,7 @@ Windows 的 SmartScreen 会对**没有代码签名**或**从网络下载**的 `.
 
   ```powershell
   signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
-    /f mycert.pfx /p PASSWORD "dist\TorchDragon.exe"
+    /f mycert.pfx /p PASSWORD "dist\TorchDragon\TorchDragon.exe"
   ```
 
   EV 证书可立即获得 SmartScreen 信誉；OV 证书需要累积下载量后信誉才会提升。

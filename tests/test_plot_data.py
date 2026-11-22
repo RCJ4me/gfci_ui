@@ -55,6 +55,8 @@ class PlotDataTests(unittest.TestCase):
         self.assertEqual([series.name for series in data.primary_series], ["CH1", "CH2"])
         self.assertEqual(data.primary_series[0].unit, "mV")
         self.assertAlmostEqual(float(data.primary_series[0].x[-1]), 200.0)
+        self.assertTrue(data.primary_series[0].y.flags.owndata)
+        self.assertTrue(data.primary_series[1].y.flags.owndata)
 
     def test_load_window_csv_with_raw_and_post_letgo_series(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -192,9 +192,9 @@ elif sys.platform == "win32":
     exe = EXE(
         pyz,
         analysis.scripts,
-        analysis.binaries,
-        analysis.datas,
         [],
+        [],
+        exclude_binaries=True,
         name=APP_NAME,
         debug=False,
         bootloader_ignore_signals=False,
@@ -208,6 +208,14 @@ elif sys.platform == "win32":
         entitlements_file=None,
         icon=APP_ICON,
         version=str(VERSION_FILE),
+    )
+    collection = COLLECT(
+        exe,
+        analysis.binaries,
+        analysis.datas,
+        strip=False,
+        upx=False,
+        name=APP_NAME,
     )
 else:
     raise SystemExit("This spec supports macOS and Windows only.")

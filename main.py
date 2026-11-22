@@ -14,6 +14,7 @@ After layout changes, regenerate window.py:
 """
 
 import csv
+import gc
 import inspect
 import os
 import sys
@@ -34,7 +35,7 @@ from PyQt6.QtWidgets import (
 
 
 # Shown in the bottom-left corner of the window (see window.ui / lbl_version).
-__version__ = "0.0.5.3"
+__version__ = "0.0.6.0"
 APP_NAME = "GFCI Analyzer"
 APP_USER_MODEL_ID = "GFCI.Analyzer"
 APP_ICON_RELATIVE_PATH = Path("assets") / "torchdragon.ico"
@@ -72,11 +73,6 @@ for _path in reversed(_IMPORT_PATHS):
     sys.path.insert(0, _path)
 
 from window import Ui_MainWindow  # noqa: E402
-from report_export import (  # noqa: E402
-    export_markdown_to_pdf,
-    pdf_path_for_csv,
-    render_report_html,
-)
 from plot_data import (  # noqa: E402
     PlotDataWorker,
     PlotSource,
@@ -87,6 +83,25 @@ from preview_plot import (  # noqa: E402
     PreviewPlotWidget,
     PreviewSeries,
 )
+
+
+def export_markdown_to_pdf(*args, **kwargs):
+    """Import PDF dependencies only when report export is first requested."""
+    from report_export import export_markdown_to_pdf as export
+
+    return export(*args, **kwargs)
+
+
+def pdf_path_for_csv(*args, **kwargs):
+    from report_export import pdf_path_for_csv as build_path
+
+    return build_path(*args, **kwargs)
+
+
+def render_report_html(*args, **kwargs):
+    from report_export import render_report_html as render
+
+    return render(*args, **kwargs)
 
 
 def resource_path(relative_path):
@@ -117,6 +132,56 @@ def configure_matplotlib_cache():
     except OSError:
         return
     os.environ.setdefault("MPLCONFIGDIR", str(cache_dir))
+
+
+def process_memory_mb() -> float | None:
+    """Return the current process working set or peak RSS where supported."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            class ProcessMemoryCounters(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            counters = ProcessMemoryCounters()
+            counters.cb = ctypes.sizeof(counters)
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            psapi = ctypes.WinDLL("psapi", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            psapi.GetProcessMemoryInfo.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(ProcessMemoryCounters),
+                wintypes.DWORD,
+            ]
+            psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+            if psapi.GetProcessMemoryInfo(
+                kernel32.GetCurrentProcess(),
+                ctypes.byref(counters),
+                counters.cb,
+            ):
+                return counters.WorkingSetSize / (1024.0 * 1024.0)
+            return None
+
+        import resource
+
+        peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        if sys.platform == "darwin":
+            return peak / (1024.0 * 1024.0)
+        return peak / 1024.0
+    except Exception:  # Memory logging must never affect application behavior.
+        return None
 
 
 def configure_windows_app_id() -> bool:
@@ -534,15 +599,20 @@ class AnalysisWorker(QThread):
                     plot_sources,
                 )
                 success_count += 1
+                del result
+                del plot_sources
+                gc.collect()
             except Exception as exc:  # noqa: BLE001
                 fail_count += 1
                 self.log.emit(f"!!! Analysis failed {base}: {exc}")
                 self.log.emit(traceback.format_exc())
+                gc.collect()
 
         self.log.emit(
             f"All done: {success_count} succeeded, {fail_count} failed, "
             f"{skipped_count} skipped"
         )
+        gc.collect()
         self.finished_ok.emit(success_count, fail_count, skipped_count)
 
 
@@ -579,6 +649,7 @@ class MainWindow(QMainWindow):
         self._setup_plot_views()
         self._setup_preview_view()
         self._connect_signals()
+        QTimer.singleShot(0, lambda: self.log_memory("Startup complete"))
 
     def _connect_signals(self):
         self.ui.btn_add_files.clicked.connect(self.add_files)
@@ -740,6 +811,7 @@ class MainWindow(QMainWindow):
             f"Preview ready: {series.point_count} samples",
             5000,
         )
+        self.log_memory("Preview loaded")
 
     def _on_preview_failed(self, message, generation):
         if generation != self._preview_generation:
@@ -753,6 +825,7 @@ class MainWindow(QMainWindow):
         self.ui.btn_preview.setEnabled(True)
         if worker is not None:
             worker.deleteLater()
+        gc.collect()
 
     def _setup_plot_views(self):
         """Create the interactive Plot view and wire its controls."""
@@ -836,6 +909,7 @@ class MainWindow(QMainWindow):
             return
         self.plot_view.set_plot_data(plot_data)
         self.statusBar().showMessage(f"Plot ready: {plot_data.title}", 5000)
+        self.log_memory(f"Plot loaded: {plot_data.title}")
 
     def _on_plot_data_failed(self, message, generation):
         if generation != self._plot_request_generation:
@@ -851,6 +925,7 @@ class MainWindow(QMainWindow):
             self.plot_worker = None
         if worker is not None:
             worker.deleteLater()
+        gc.collect()
         self._start_pending_plot_load()
 
     def _on_channel_changed(self, _text):
@@ -1146,6 +1221,8 @@ class MainWindow(QMainWindow):
         self.ui.txt_report.clear()
         self._reset_curve_gallery()
         self._invalidate_preview()
+        gc.collect()
+        self.log_memory("New analysis started")
         self._current_report_path = None
         self.ui.btn_open_export_folder.setEnabled(False)
         self.set_progress(0)
@@ -1159,6 +1236,7 @@ class MainWindow(QMainWindow):
         self.worker.log.connect(self.log)
         self.worker.file_done.connect(self.on_file_done)
         self.worker.finished_ok.connect(self.on_finished)
+        self.worker.finished.connect(self.worker.deleteLater)
         self.worker.start()
 
     def on_file_done(
@@ -1242,6 +1320,8 @@ class MainWindow(QMainWindow):
                 report_text,
                 report_file.parent if report_file is not None else None,
             )
+        gc.collect()
+        self.log_memory(f"Finished processing: {base}")
 
     def open_export_folder(self):
         if not self._current_report_path:
@@ -1267,6 +1347,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export Folder", message)
 
     def on_finished(self, success, fail, skipped):
+        worker = self.worker
+        self.worker = None
         self.ui.btn_run.setEnabled(True)
         self.set_progress(100)
         self.statusBar().showMessage(
@@ -1274,6 +1356,8 @@ class MainWindow(QMainWindow):
             f"{skipped} skipped",
             8000,
         )
+        gc.collect()
+        self.log_memory("Analysis finished")
 
     def show_report(
         self,
@@ -1305,6 +1389,36 @@ class MainWindow(QMainWindow):
         warning.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         warning.setModal(False)
         warning.show()
+
+    def log_memory(self, label):
+        memory_mb = process_memory_mb()
+        if memory_mb is not None:
+            self.log(f"[Memory] {label}: {memory_mb:.1f} MB")
+
+    def _release_interactive_data(self):
+        self._invalidate_preview()
+        self._plot_request_generation += 1
+        self._pending_plot_source = None
+        self._plot_sources.clear()
+        self.ui.combo_curve_image.clear()
+        self.plot_view.set_placeholder("Interactive plot data released.")
+        self.plot_view.clear_plot()
+        gc.collect()
+
+    def closeEvent(self, event):
+        if self.worker is not None and self.worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Analysis Running",
+                "Please wait for the current analysis to finish before closing.",
+            )
+            event.ignore()
+            return
+        for worker in (self.preview_worker, self.plot_worker):
+            if worker is not None and worker.isRunning():
+                worker.wait(5000)
+        self._release_interactive_data()
+        super().closeEvent(event)
 
     def log(self, message):
         self.ui.txt_log.appendPlainText(message)

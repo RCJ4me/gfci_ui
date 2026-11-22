@@ -10,7 +10,8 @@ if errorlevel 1 exit /b %errorlevel%
 
 echo.
 echo Build complete. See the dist directory.
-echo Output: dist\TorchDragon.exe
+echo Output: dist\TorchDragon\TorchDragon.exe
+echo Distribute the complete dist\TorchDragon directory.
 echo.
 echo If Windows SmartScreen warns about an unknown publisher, see the
 echo "Avoid the Windows SmartScreen warning" section in PACKAGING.md.
