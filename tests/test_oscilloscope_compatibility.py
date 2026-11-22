@@ -386,6 +386,12 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
         self.assertEqual(window.ui.tab_results.currentIndex(), 0)
         self.assertTrue(window.ui.radio_full_scale.isChecked())
         self.assertFalse(window.ui.radio_customize_scale.isChecked())
+        self.assertFalse(window.ui.radio_full_report.isChecked())
+        self.assertTrue(window.ui.radio_pdf_only.isChecked())
+        window.ui.radio_full_report.setChecked(True)
+        self.assertTrue(window.ui.radio_full_report.isChecked())
+        self.assertFalse(window.ui.radio_pdf_only.isChecked())
+        window.ui.radio_pdf_only.setChecked(True)
         window.ui.radio_customize_scale.setChecked(True)
         self.assertFalse(window.ui.radio_full_scale.isChecked())
         self.assertTrue(window.ui.radio_customize_scale.isChecked())
@@ -394,8 +400,24 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
         self.assertIsInstance(window.preview_plot, main.PreviewPlotWidget)
         self.assertIsInstance(window.plot_view, main.InteractivePlotWidget)
         self.assertEqual(window.ui.mainLayout.stretch(0), 39)
-        self.assertEqual(window.ui.mainLayout.stretch(1), 61)
+        self.assertEqual(window.ui.mainLayout.stretch(1), 0)
+        self.assertEqual(window.ui.mainLayout.stretch(2), 61)
         self.assertEqual(window.ui.groupBox_input.minimumWidth(), 320)
+        self.assertEqual(window.ui.groupBox_input.title(), "Import CSV")
+        self.assertEqual(
+            window.ui.groupBox_params.title(),
+            "Analysis Parameters",
+        )
+        self.assertEqual(
+            window.ui.groupBox_report_format.title(),
+            "Report Format",
+        )
+
+        window.toggle_left_panel()
+        self.assertFalse(window.ui.groupBox_input.isVisible())
+        self.assertTrue(window.ui.btn_toggle_left_panel.isVisible())
+        window.toggle_left_panel()
+        self.assertTrue(window.ui.groupBox_input.isVisible())
 
         left_width = window.ui.groupBox_input.width()
         right_width = window.ui.tab_results.width()
@@ -936,6 +958,15 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
             self.assertEqual(report_path.name, "Summary_Report_LCSD_GFCI.md")
             self.assertFalse(report_path.exists())
             self.assertTrue(pdf_path.is_file())
+            full_report_suffixes = {
+                path.suffix.casefold()
+                for path in expected_dir.iterdir()
+                if path.is_file()
+            }
+            self.assertIn(".pdf", full_report_suffixes)
+            self.assertIn(".png", full_report_suffixes)
+            self.assertIn(".csv", full_report_suffixes)
+            self.assertNotIn(".md", full_report_suffixes)
             pdf_bytes = pdf_path.read_bytes()
             self.assertTrue(pdf_bytes.startswith(b"%PDF-"))
             self.assertGreater(pdf_path.stat().st_size, 0)
@@ -1000,6 +1031,62 @@ class OscilloscopeCompatibilityTests(unittest.TestCase):
                 Path(open_url.call_args.args[0].toLocalFile()),
                 expected_dir.resolve(),
             )
+            window.close()
+        self.assertIsNotNone(app)
+
+    def test_pdf_only_keeps_only_pdf_and_uses_session_cache(self):
+        app = QApplication.instance() or QApplication([])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_path = self._write_waveform_csv(root)
+            output_dir = root / "export"
+            cache_dir = root / "plot-cache"
+            cache_dir.mkdir()
+            window = main.MainWindow()
+            window._analysis_cache_dir = cache_dir
+            window._last_analysis_output_dir = str(output_dir)
+            worker = main.AnalysisWorker(
+                [str(source_path)],
+                {
+                    "analysis_mode": main.FULL_SCALE_ANALYSIS,
+                    "report_format": main.PDF_ONLY,
+                    "cache_dir": str(cache_dir),
+                    "time_start": 0.2,
+                    "time_end": 0.4,
+                    "fft_min": 40,
+                    "fft_max": 250,
+                    "channel": "ch1",
+                    "overlimit": 3.5,
+                    "picture_format": 0,
+                    "output_dir": str(output_dir),
+                },
+                window,
+            )
+            callbacks = []
+            worker.file_done.connect(lambda *args: callbacks.append(args))
+            worker.run()
+            self.assertEqual(len(callbacks), 1)
+            plot_sources = callbacks[0][7]
+            self.assertTrue(
+                all(Path(source.csv_path).is_file() for source in plot_sources)
+            )
+
+            window.on_file_done(*callbacks[0])
+            self._wait_for_plot(window, app)
+            final_dir = output_dir / source_path.stem
+            final_files = sorted(
+                path.name for path in final_dir.iterdir() if path.is_file()
+            )
+
+            self.assertEqual(
+                final_files,
+                [f"TD GFCI Report {source_path.stem}.pdf"],
+            )
+            self.assertTrue(final_dir.joinpath(final_files[0]).is_file())
+            self.assertTrue(all(Path(s.csv_path).is_file() for s in plot_sources))
+
+            window._release_interactive_data()
+            self.assertFalse(cache_dir.exists())
             window.close()
         self.assertIsNotNone(app)
 

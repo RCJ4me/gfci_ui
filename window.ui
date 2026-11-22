@@ -39,7 +39,10 @@
        </size>
       </property>
       <property name="title">
-       <string>1. Input Data</string>
+       <string>Import CSV</string>
+      </property>
+      <property name="styleSheet">
+       <string notr="true">QGroupBox::title { font-weight: 700; font-size: 12pt; }</string>
       </property>
       <layout class="QVBoxLayout" name="inputLayout">
        <item>
@@ -73,7 +76,10 @@
        <item>
         <widget class="QGroupBox" name="groupBox_params">
          <property name="title">
-          <string>2. Analysis Parameters</string>
+          <string>Analysis Parameters</string>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QGroupBox::title { font-weight: 700; font-size: 12pt; }</string>
          </property>
          <layout class="QGridLayout" name="paramsLayout">
           <item row="0" column="0">
@@ -269,6 +275,35 @@
         </widget>
        </item>
        <item>
+        <widget class="QGroupBox" name="groupBox_report_format">
+         <property name="title">
+          <string>Report Format</string>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QGroupBox::title { font-weight: 700; font-size: 12pt; }</string>
+         </property>
+         <layout class="QVBoxLayout" name="reportFormatLayout">
+          <item>
+           <widget class="QRadioButton" name="radio_full_report">
+            <property name="text">
+             <string>Full Report</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QRadioButton" name="radio_pdf_only">
+            <property name="text">
+             <string>PDF Only</string>
+            </property>
+            <property name="checked">
+             <bool>true</bool>
+            </property>
+           </widget>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <widget class="QPushButton" name="btn_preview">
          <property name="text">
           <string>Preview</string>
@@ -340,6 +375,31 @@
         </layout>
        </item>
       </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QToolButton" name="btn_toggle_left_panel">
+      <property name="minimumSize">
+       <size>
+        <width>24</width>
+        <height>0</height>
+       </size>
+      </property>
+      <property name="maximumSize">
+       <size>
+        <width>24</width>
+        <height>16777215</height>
+       </size>
+      </property>
+      <property name="toolTip">
+       <string>Hide left panel</string>
+      </property>
+      <property name="text">
+       <string>&lt;</string>
+      </property>
+      <property name="autoRaise">
+       <bool>true</bool>
+      </property>
      </widget>
     </item>
     <item>

@@ -17,7 +17,9 @@ import csv
 import gc
 import inspect
 import os
+import shutil
 import sys
+import tempfile
 import traceback
 from pathlib import Path
 
@@ -35,13 +37,15 @@ from PyQt6.QtWidgets import (
 
 
 # Shown in the bottom-left corner of the window (see window.ui / lbl_version).
-__version__ = "0.0.6.0"
+__version__ = "0.0.7.0"
 APP_NAME = "GFCI Analyzer"
 APP_USER_MODEL_ID = "GFCI.Analyzer"
 APP_ICON_RELATIVE_PATH = Path("assets") / "torchdragon.ico"
 DEFAULT_CSV_SAMPLE_INTERVAL = 3.2e-7
 FULL_SCALE_ANALYSIS = "full_scale"
 CUSTOMIZE_SCALE_ANALYSIS = "customize_scale"
+FULL_REPORT = "full_report"
+PDF_ONLY = "pdf_only"
 ANALYSIS_MODE_LABELS = {
     FULL_SCALE_ANALYSIS: "Full Scale Analysis",
     CUSTOMIZE_SCALE_ANALYSIS: "Customize Scale Analysis",
@@ -507,7 +511,11 @@ class AnalysisWorker(QThread):
             picture_format=self.params["picture_format"],
             show=False,
         )
-        output_cfg = OutputConfig(output_dir=Path(self.params["output_dir"]))
+        report_format = self.params.get("report_format", FULL_REPORT)
+        analysis_output_dir = self.params["output_dir"]
+        if report_format == PDF_ONLY and self.params.get("cache_dir"):
+            analysis_output_dir = self.params["cache_dir"]
+        output_cfg = OutputConfig(output_dir=Path(analysis_output_dir))
         output_cfg.ensure()
 
         # Older engine revisions have no stage hook; fall back to per-file progress.
@@ -622,7 +630,8 @@ class MainWindow(QMainWindow):
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
         self.ui.mainLayout.setStretch(0, 39)
-        self.ui.mainLayout.setStretch(1, 61)
+        self.ui.mainLayout.setStretch(1, 0)
+        self.ui.mainLayout.setStretch(2, 61)
 
         self.worker = None
         self.preview_worker = None
@@ -632,6 +641,9 @@ class MainWindow(QMainWindow):
         self._pending_plot_source = None
         self._channel_user_selected = False
         self._plot_sources = []
+        self._analysis_cache_dir = None
+        self._last_analysis_output_dir = None
+        self._left_panel_visible = True
         self._current_report_path = None
         self._progress_target = 0
         self._progress_ceiling = 0
@@ -646,8 +658,10 @@ class MainWindow(QMainWindow):
         self.ui.lbl_version.setText(f"Version {__version__}")
         self.ui.edit_output_dir.setText(default_output_directory())
         self._setup_analysis_modes()
+        self._setup_report_format()
         self._setup_plot_views()
         self._setup_preview_view()
+        self._setup_sidebar_toggle()
         self._connect_signals()
         QTimer.singleShot(0, lambda: self.log_memory("Startup complete"))
 
@@ -656,6 +670,9 @@ class MainWindow(QMainWindow):
         self.ui.btn_remove_file.clicked.connect(self.remove_file)
         self.ui.btn_clear_files.clicked.connect(self.clear_files)
         self.ui.btn_browse_dir.clicked.connect(self.browse_output_dir)
+        self.ui.btn_toggle_left_panel.clicked.connect(
+            self.toggle_left_panel
+        )
         self.ui.btn_preview.clicked.connect(self.preview_data)
         self.ui.btn_run.clicked.connect(self.run_analysis)
         self.ui.btn_open_export_folder.clicked.connect(
@@ -686,6 +703,45 @@ class MainWindow(QMainWindow):
         self._analysis_mode_group.addButton(self.ui.radio_full_scale)
         self._analysis_mode_group.addButton(self.ui.radio_customize_scale)
         self.ui.radio_full_scale.setChecked(True)
+
+    def _setup_report_format(self):
+        self._report_format_group = QButtonGroup(self)
+        self._report_format_group.setExclusive(True)
+        self._report_format_group.addButton(self.ui.radio_full_report)
+        self._report_format_group.addButton(self.ui.radio_pdf_only)
+        self.ui.radio_pdf_only.setChecked(True)
+
+    def _setup_sidebar_toggle(self):
+        self._left_arrow_icon = self.style().standardIcon(
+            QStyle.StandardPixmap.SP_ArrowLeft
+        )
+        self._right_arrow_icon = self.style().standardIcon(
+            QStyle.StandardPixmap.SP_ArrowRight
+        )
+        self.ui.btn_toggle_left_panel.setIcon(self._left_arrow_icon)
+        self.set_left_panel_visible(True)
+
+    def _report_format(self):
+        if self.ui.radio_full_report.isChecked():
+            return FULL_REPORT
+        return PDF_ONLY
+
+    def set_left_panel_visible(self, visible):
+        self._left_panel_visible = bool(visible)
+        self.ui.groupBox_input.setVisible(self._left_panel_visible)
+        self.ui.btn_toggle_left_panel.setIcon(
+            self._left_arrow_icon
+            if self._left_panel_visible
+            else self._right_arrow_icon
+        )
+        self.ui.btn_toggle_left_panel.setToolTip(
+            "Hide left panel"
+            if self._left_panel_visible
+            else "Show left panel"
+        )
+
+    def toggle_left_panel(self):
+        self.set_left_panel_visible(not self._left_panel_visible)
 
     def _setup_preview_view(self):
         layout = QVBoxLayout(self.ui.preview_plot_host)
@@ -1079,6 +1135,13 @@ class MainWindow(QMainWindow):
                 "Preview data is still loading. Please wait.",
             )
             return
+        if self.plot_worker is not None and self.plot_worker.isRunning():
+            QMessageBox.information(
+                self,
+                "Notice",
+                "Plot data is still loading. Please wait.",
+            )
+            return
 
         files = [self.ui.list_files.item(i).text()
                  for i in range(self.ui.list_files.count())]
@@ -1205,8 +1268,21 @@ class MainWindow(QMainWindow):
             )
             return
 
+        report_format = self._report_format()
+        output_dir = self.ui.edit_output_dir.text().strip() or "./export"
+        self._clear_analysis_cache()
+        if report_format == PDF_ONLY:
+            self._prepare_analysis_cache()
+        self._last_analysis_output_dir = output_dir
+
         params = {
             "analysis_mode": analysis_mode,
+            "report_format": report_format,
+            "cache_dir": (
+                str(self._analysis_cache_dir)
+                if self._analysis_cache_dir is not None
+                else ""
+            ),
             "time_start": time_start,
             "time_end": time_end,
             "fft_min": self.ui.spin_fft_min.value(),
@@ -1214,7 +1290,7 @@ class MainWindow(QMainWindow):
             "channel": selected_channel.casefold(),
             "overlimit": self.ui.spin_overlimit.value(),
             "picture_format": self.ui.combo_format.currentIndex(),
-            "output_dir": self.ui.edit_output_dir.text().strip() or "./export",
+            "output_dir": output_dir,
         }
 
         self.ui.txt_log.clear()
@@ -1270,12 +1346,21 @@ class MainWindow(QMainWindow):
 
         report_file = Path(report_path) if report_path else None
         self._current_report_path = report_path or None
+        report_format = (
+            self._report_format()
+            if self._last_analysis_output_dir is not None
+            else FULL_REPORT
+        )
 
         if report_file is not None:
             try:
                 pdf_path = export_markdown_to_pdf(
                     report_file,
-                    pdf_path_for_csv(report_file, base),
+                    self._pdf_target_for_report(
+                        report_file,
+                        base,
+                        report_format,
+                    ),
                 )
             except Exception as exc:  # noqa: BLE001
                 message = (
@@ -1298,6 +1383,8 @@ class MainWindow(QMainWindow):
                         str(exc),
                     )
                 else:
+                    if report_format == PDF_ONLY:
+                        self._clean_pdf_only_directory(pdf_path.parent, pdf_path)
                     self.log(
                         f"PDF exported: {pdf_path}; Markdown removed"
                     )
@@ -1322,6 +1409,33 @@ class MainWindow(QMainWindow):
             )
         gc.collect()
         self.log_memory(f"Finished processing: {base}")
+
+    def _pdf_target_for_report(
+        self,
+        report_file,
+        base,
+        report_format,
+    ):
+        if (
+            report_format != PDF_ONLY
+            or self._last_analysis_output_dir is None
+        ):
+            return pdf_path_for_csv(report_file, base)
+        data_name = Path(base).stem
+        target_dir = Path(self._last_analysis_output_dir) / data_name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return target_dir / f"TD GFCI Report {data_name}.pdf"
+
+    @staticmethod
+    def _clean_pdf_only_directory(directory, pdf_path):
+        removable_suffixes = {".csv", ".md", ".png", ".svg"}
+        for path in Path(directory).iterdir():
+            if (
+                path.is_file()
+                and path.resolve() != Path(pdf_path).resolve()
+                and path.suffix.casefold() in removable_suffixes
+            ):
+                path.unlink(missing_ok=True)
 
     def open_export_folder(self):
         if not self._current_report_path:
@@ -1403,7 +1517,35 @@ class MainWindow(QMainWindow):
         self.ui.combo_curve_image.clear()
         self.plot_view.set_placeholder("Interactive plot data released.")
         self.plot_view.clear_plot()
+        self._clear_analysis_cache()
         gc.collect()
+
+    def _prepare_analysis_cache(self):
+        self._clear_analysis_cache()
+        cache_location = QStandardPaths.writableLocation(
+            QStandardPaths.StandardLocation.CacheLocation
+        )
+        root = Path(cache_location) if cache_location else Path(
+            tempfile.gettempdir()
+        )
+        root.mkdir(parents=True, exist_ok=True)
+        try:
+            self._analysis_cache_dir = Path(
+                tempfile.mkdtemp(prefix="analysis-", dir=root)
+            )
+        except OSError:
+            self._analysis_cache_dir = Path(
+                tempfile.mkdtemp(
+                    prefix="analysis-",
+                    dir=tempfile.gettempdir(),
+                )
+            )
+
+    def _clear_analysis_cache(self):
+        if self._analysis_cache_dir is None:
+            return
+        shutil.rmtree(self._analysis_cache_dir, ignore_errors=True)
+        self._analysis_cache_dir = None
 
     def closeEvent(self, event):
         if self.worker is not None and self.worker.isRunning():

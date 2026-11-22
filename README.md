@@ -21,6 +21,8 @@
 * Choose `Full Scale Analysis` for the existing whole-record workflow, or `Customize Scale Analysis` to apply statistics, plots, CSV exports, and both FFT analyses only to the selected time range.
 * The Plot tab provides interactive time-domain and FFT plots loaded from the exported analysis CSV files. Time-domain plots use a zero-centered symmetric Y axis; FFT plots retain their logarithmic frequency axis. Pass Criteria remain visible but do not participate in hover selection.
 * Windows builds use a directory distribution for faster startup. Memory usage is recorded in the Log at startup, per-file completion, Plot loading, and release points.
+* Choose `Full Report` to keep the PDF with its generated plots and analysis CSV files, or `PDF Only` to keep only the final PDF in the output folder while Plot data remains in a temporary session cache.
+* Use the divider button to hide or restore the left input panel and expand the interactive plots.
 
 ### 2. Let-go network simulation
 
